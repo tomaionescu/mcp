@@ -1,7 +1,9 @@
 import '../../shared/button.css';
+import { type RefObject, useEffect, useRef } from 'react';
 import { useAnnouncement } from '../../shared/Announcer';
 import { RefreshIcon, SpinnerIcon } from '../../shared/icons';
 import { type McpView, useMcpView } from '../../shared/use-mcp-view';
+import { registerViewTool, type ViewToolHandle } from '../../shared/view-tools';
 import { IssueRow } from './IssueRow';
 import { IssuesList } from './IssuesList';
 import {
@@ -12,6 +14,7 @@ import {
   issueKey,
 } from './issues-schema';
 import { Pager, rangeLabel } from './Pager';
+import { type Reload, refreshIssuesViewTool } from './refresh-tool';
 import { SelectionBar } from './SelectionBar';
 import { type ActiveIssuesView, issueTypeOf, useIssues } from './use-issues';
 
@@ -52,21 +55,54 @@ function clockTime(iso: string | undefined) {
  * select and hand to the assistant with "Review these issues (N)".
  */
 export function ShowIssues() {
-  const view = useMcpView<unknown>('supabase-show-issues');
+  // `refresh_issues_view` is registered once, before the view connects. It
+  // reloads whichever list is mounted when the model calls it.
+  const reload = useRef<Reload>(undefined);
+  const tool = useRef<ViewToolHandle>(undefined);
+  const view = useMcpView<unknown>('supabase-show-issues', {
+    onAppCreated: (app) => {
+      tool.current = registerViewTool(
+        app,
+        refreshIssuesViewTool(() => reload.current)
+      );
+    },
+  });
   const type = issueTypeOf(view.input);
   // The list is for one type: a different one (once the input arrives)
   // starts a new list.
-  return <IssuesSection key={type} view={view} type={type} />;
+  return (
+    <IssuesSection
+      key={type}
+      view={view}
+      type={type}
+      reload={reload}
+      tool={tool}
+    />
+  );
 }
 
 function IssuesSection({
   view,
   type,
+  reload,
+  tool,
 }: {
   view: McpView<unknown>;
   type: IssueType;
+  /** Set to this list's reload, for the view tool to call. */
+  reload: RefObject<Reload | undefined>;
+  tool: RefObject<ViewToolHandle | undefined>;
 }) {
   const issues = useIssues(view, type);
+  useEffect(() => {
+    reload.current = issues.status === 'active' ? issues.reload : undefined;
+  });
+  // The host sends a view tool call to any one of the views that has it, so
+  // only the active view keeps it.
+  const retired = issues.status === 'retired';
+  useEffect(() => {
+    if (retired) tool.current?.disable();
+  }, [retired, tool]);
   return issues.status === 'retired' ? (
     <RetiredIssues shown={issues.shown} />
   ) : (

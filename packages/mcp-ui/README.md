@@ -18,6 +18,14 @@ Views talk to the host with the official SDK, [`@modelcontextprotocol/ext-apps`]
 
 `show-issues` is split into layers, each knowing only the one below it: `issues-schema.ts` and `issues-client.ts` read the server's results (never cast: the view and the server can be different versions), `issues-list.ts`, `selection.ts`, `handoff.ts` and `prompts.ts` hold the logic without React, `use-issues.ts` runs it and is the only place that calls the host or catches errors, and the components (`IssuesList`, `IssueRow`, `SeverityIndicator`, `Pager`, `SelectionBar`) only draw props. It reads its first page from the result's `_meta` and pages further with `app_paginate_issues`. The mock API's `show-issues:*` scenarios cover many issues, none, a category that can't be read and a page that fails.
 
+Each tool call mounts a new view, and the older copies stay live further up the chat. `src/shared/use-supersession.ts` retires them. Each view posts a stamp from its tool result, `{ key, at, id }` with `at` from the server's clock, on one shared `BroadcastChannel`, `supabase-mcp-views`. A view that hears a newer stamp with its key retires; one that hears an older stamp answers, so an old view that mounts late still learns it is old. The key is the view's name plus the project ref, so only views of the same kind and project retire each other. A view opts in by passing its key and stamp. A retired `show-issues` view greys its rows, points to the newer view, clears what it shared with the model and disables its view tool.
+
+### View tools
+
+A view can register a tool for the model to call with `registerViewTool(app, tool)` from `src/shared/view-tools.ts`, inside `useMcpView`'s `onAppCreated` so the handshake declares it. It registers the tool with `app.registerTool`, and with WebMCP (`document.modelContext`) where the browser has it, and returns one handle that disables both. It is the only vendor-specific code in the views, and it picks its path by feature detection, never by the host's name. Delete the WebMCP bridge when upgrading to `@modelcontextprotocol/ext-apps` 2.1.0, which mirrors to WebMCP itself. View tools are in the draft MCP Apps spec, so no view should depend on one.
+
+`show-issues` registers `refresh_issues_view`. It reloads the list as Refresh does and returns one line, such as "Issues reloaded: 21 issues, was 23." It has no `app_` prefix: that marks a server tool only the view calls, and a view tool is the opposite, a tool the model calls.
+
 ## Develop a view
 
 Views render in [MCP Inspector](https://github.com/modelcontextprotocol/inspector), a full MCP Apps host. From the repo root, in two terminals:

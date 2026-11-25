@@ -16,6 +16,10 @@ import type { IssueSummary } from './issues-schema';
 import { LIST_CHANGED_MESSAGE } from './issues-list';
 import { OUT_OF_STEP_MESSAGE } from './issues-schema';
 import { selectionContext } from './selection';
+import {
+  CANNOT_RELOAD_MESSAGE,
+  REFRESH_TOOL_DESCRIPTION,
+} from './refresh-tool';
 import { RETIRED_NOTICE, ShowIssues } from './ShowIssues';
 
 const { host } = vi.hoisted(() => ({
@@ -29,27 +33,45 @@ const { host } = vi.hoisted(() => ({
     updateModelContext: undefined as
       | ((params: unknown) => Promise<void>)
       | undefined,
+    /** The app `onAppCreated` is given. */
+    app: undefined as unknown,
+    /** What happened to the app, in order. */
+    log: [] as string[],
   },
 }));
 
-vi.mock('../../shared/use-mcp-view', () => ({
-  useMcpView: () => ({
-    toolCall: host.toolCall,
-    app: null,
-    input: host.input,
-    hostContext: undefined,
-    hostCapabilities: {},
-    dashboardUrl: 'https://supabase.com/dashboard',
-    callTool: host.callTool,
-    inputText: (key: string) => {
-      const value = host.input?.[key];
-      return typeof value === 'string' ? value : undefined;
+// As the real hook: the app is created, `onAppCreated` runs, then it
+// connects.
+vi.mock('../../shared/use-mcp-view', async () => {
+  const { useEffect } = await import('react');
+  return {
+    useMcpView: (
+      _name: string,
+      options: { onAppCreated?: (app: unknown) => void } = {}
+    ) => {
+      useEffect(() => {
+        options.onAppCreated?.(host.app);
+        host.log.push('connected');
+      }, []);
+      return {
+        toolCall: host.toolCall,
+        app: null,
+        input: host.input,
+        hostContext: undefined,
+        hostCapabilities: {},
+        dashboardUrl: 'https://supabase.com/dashboard',
+        callTool: host.callTool,
+        inputText: (key: string) => {
+          const value = host.input?.[key];
+          return typeof value === 'string' ? value : undefined;
+        },
+        openLink: undefined,
+        sendMessage: host.sendMessage,
+        updateModelContext: host.updateModelContext,
+      };
     },
-    openLink: undefined,
-    sendMessage: host.sendMessage,
-    updateModelContext: host.updateModelContext,
-  }),
-}));
+  };
+});
 
 const PROJECT = 'abcdefghijklmnopqrst';
 
@@ -113,6 +135,21 @@ const callTool =
   vi.fn<(name: string, args: Record<string, unknown>) => Promise<unknown>>();
 const sendMessage = vi.fn<(text: string) => Promise<void>>();
 const updateModelContext = vi.fn<(params: unknown) => Promise<void>>();
+const toolHandle = { disable: vi.fn() };
+const registerTool = vi.fn((..._args: unknown[]) => {
+  host.log.push('registered tool');
+  return toolHandle;
+});
+
+/** The model calls `refresh_issues_view`; resolves with its result. */
+async function callViewTool() {
+  const handler = registerTool.mock.calls[0]![2] as () => Promise<unknown>;
+  let result: unknown;
+  await act(async () => {
+    result = await handler();
+  });
+  return result;
+}
 
 /** Lets pending tool calls settle and re-render. */
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve)));
@@ -151,6 +188,10 @@ beforeEach(() => {
   host.callTool = callTool;
   host.sendMessage = sendMessage;
   host.updateModelContext = updateModelContext;
+  host.app = { registerTool };
+  host.log = [];
+  registerTool.mockClear();
+  toolHandle.disable.mockClear();
   vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
 });
 afterEach(() => {
@@ -495,6 +536,62 @@ describe('ShowIssues', () => {
     });
   });
 
+  describe('refresh_issues_view', () => {
+    it('is registered before the view connects', () => {
+      renderView();
+
+      expect(host.log).toEqual(['registered tool', 'connected']);
+      expect(registerTool).toHaveBeenCalledWith(
+        'refresh_issues_view',
+        { description: REFRESH_TOOL_DESCRIPTION },
+        expect.any(Function)
+      );
+    });
+
+    it('reloads the list from the first page and returns the counts', async () => {
+      manyIssues();
+      callTool.mockResolvedValue(
+        page({ rows: issues(1, 20), total: 21, next_cursor: 'c2' })
+      );
+      const view = renderView();
+      click('Next');
+
+      await expect(callViewTool()).resolves.toEqual({
+        content: [
+          { type: 'text', text: 'Issues reloaded: 21 issues, was 23.' },
+        ],
+      });
+      expect(callTool).toHaveBeenCalledWith('app_paginate_issues', {
+        project_id: PROJECT,
+        type: 'all',
+      });
+      expect(view.range()).toBe('1–5 of 21');
+    });
+
+    it('returns the failure, which the list shows too', async () => {
+      manyIssues();
+      callTool.mockRejectedValue(new Error('Forbidden'));
+      renderView();
+
+      await expect(callViewTool()).resolves.toEqual({
+        content: [{ type: 'text', text: 'Forbidden' }],
+        isError: true,
+      });
+      expect(inView().getByText('Forbidden')).not.toBeNull();
+    });
+
+    it("says it can't reload on a host without tool calls", async () => {
+      host.callTool = undefined;
+      manyIssues();
+      renderView();
+
+      await expect(callViewTool()).resolves.toEqual({
+        content: [{ type: 'text', text: CANNOT_RELOAD_MESSAGE }],
+        isError: true,
+      });
+    });
+  });
+
   describe('retiring', () => {
     /** Another issues view of the project, opened at `at`, announces itself. */
     function newerViewOpens(at = 2, project = PROJECT) {
@@ -536,6 +633,21 @@ describe('ShowIssues', () => {
 
       await newerViewOpens(3);
       expect(updateModelContext).toHaveBeenCalledTimes(2);
+    });
+
+    it('disables its view tool, so only the active view has it', async () => {
+      manyIssues();
+      renderView();
+      expect(toolHandle.disable).not.toHaveBeenCalled();
+
+      await newerViewOpens();
+
+      expect(toolHandle.disable).toHaveBeenCalledTimes(1);
+      await expect(callViewTool()).resolves.toEqual({
+        content: [{ type: 'text', text: CANNOT_RELOAD_MESSAGE }],
+        isError: true,
+      });
+      expect(callTool).not.toHaveBeenCalled();
     });
 
     it('stays active for an older view or another project', async () => {

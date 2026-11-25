@@ -28,6 +28,7 @@ import {
   parseViewData,
 } from './issues-schema';
 import { reviewIssuesPrompt } from './prompts';
+import type { Reload } from './refresh-tool';
 import { type Selection, selectionContext } from './selection';
 import {
   initialViewState,
@@ -61,6 +62,18 @@ const NO_MESSAGES_MESSAGE = "This host can't take messages from the view.";
 
 const errorMessage = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
+
+/** How a page fetch ended, as the event the list machine gets. */
+type PageOutcome = Extract<Event, { type: 'pageLoaded' | 'pageFailed' }>;
+
+/** The issues in a ready listing, if known: the total, or all are loaded. */
+function listingCount(listing: Listing) {
+  if (listing.status !== 'ready') return undefined;
+  return (
+    listing.total ??
+    (listing.tail.status === 'end' ? listing.items.length : undefined)
+  );
+}
 
 export type ActiveIssuesView = {
   status: 'active';
@@ -101,6 +114,12 @@ export type ActiveIssuesView = {
    * can't take messages from the view.
    */
   review: (() => void) | undefined;
+  /**
+   * Refreshes as the button does, and settles once the first page is in,
+   * with the counts before and after (for `refresh_issues_view`). Undefined
+   * when the host can't call tools.
+   */
+  reload: Reload | undefined;
 };
 
 /**
@@ -146,11 +165,10 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
     delivered?.result?.data.context ??
     (projectId ? { project: { id: projectId } } : undefined);
 
-  /** Reads one page from the server and reports back to the list machine. */
-  async function loadPage(request: PageRequest, send: (event: Event) => void) {
+  /** Reads one page from the server, as the event for the list machine. */
+  async function readPage(request: PageRequest): Promise<PageOutcome> {
     if (!callTool) {
-      send({ type: 'pageFailed', request, message: NO_TOOL_CALLS_MESSAGE });
-      return;
+      return { type: 'pageFailed', request, message: NO_TOOL_CALLS_MESSAGE };
     }
     try {
       const { page, dropped } = await fetchIssuesPage(callTool, {
@@ -158,11 +176,14 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
         cursor: request.cursor,
         projectId,
       });
-      send({ type: 'pageLoaded', request, page, dropped });
+      return { type: 'pageLoaded', request, page, dropped };
     } catch (err) {
-      send({ type: 'pageFailed', request, message: errorMessage(err) });
+      return { type: 'pageFailed', request, message: errorMessage(err) };
     }
   }
+
+  // The first-page fetch in flight, if any, for a reload to wait on.
+  const firstPage = useRef<Promise<PageOutcome>>(undefined);
 
   /** Builds the prompt for `issues` and sends it as the user. */
   async function handOff(
@@ -192,11 +213,19 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
     initialViewState(type),
     (effect, send) => {
       switch (effect.type) {
-        case 'fetchPage':
-          void loadPage(effect.request, (event) =>
-            send({ type: 'list', event })
-          );
+        case 'fetchPage': {
+          const loading = readPage(effect.request).then((event) => {
+            send({ type: 'list', event });
+            return event;
+          });
+          if (effect.request.cursor === null) {
+            firstPage.current = loading;
+            void loading.then(() => {
+              if (firstPage.current === loading) firstPage.current = undefined;
+            });
+          }
           break;
+        }
         case 'sendMessage':
           void handOff(effect.issues, (event) =>
             send({ type: 'handoff', event })
@@ -296,6 +325,23 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
     sendList({ type: 'refresh' });
   };
 
+  const reload: Reload = async () => {
+    const before = listingCount(listing);
+    startOver();
+    // The refresh's fetch, or the first-page fetch already in flight.
+    const loading = firstPage.current;
+    if (!loading) throw new Error('The issues view did not reload.');
+    const outcome = await loading;
+    if (outcome.type === 'pageFailed') throw new Error(outcome.message);
+    const { page } = outcome;
+    return {
+      before,
+      after:
+        page.total ??
+        (page.next_cursor === null ? page.issues.length : undefined),
+    };
+  };
+
   const unavailable =
     listing.status === 'loading' && !listing.request
       ? toolCall.status === 'error'
@@ -346,5 +392,6 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
           type: 'handoff',
           event: { type: 'send', issues: [...state.selection.values()] },
         })),
+    reload: callTool && reload,
   };
 }
