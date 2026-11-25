@@ -2,9 +2,7 @@
  * Pages a project's issues for views. Pure: it knows nothing about tools or
  * HTTP, and the caller passes in the time the issues were read.
  *
- * Paging uses a keyset cursor: the sort key of the last row on a page. The
- * next page is the rows that sort after it, so an issue being fixed or a new
- * one appearing between requests never skips or repeats an unchanged issue.
+ * Paging uses a keyset cursor: the sort key of the last row on a page.
  */
 import { z } from 'zod/v4';
 import {

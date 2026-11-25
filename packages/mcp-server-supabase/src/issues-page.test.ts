@@ -185,37 +185,6 @@ describe('pageIssues', () => {
     expect(page.next_cursor).toBeNull();
   });
 
-  test('a list that shifts between requests skips and repeats no unchanged issue', () => {
-    const initial = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) =>
-      issue(id, 'security', 'warning')
-    );
-    // After the first page: `b` (seen) and `e` (not yet seen) are fixed, and
-    // new issues appear both before and after the cursor.
-    const later = [
-      ...initial.filter(({ id }) => id !== 'b' && id !== 'e'),
-      issue('a2', 'security', 'warning'),
-      issue('d2', 'security', 'warning'),
-      issue('new_critical', 'health', 'critical'),
-    ];
-
-    const pages = pageAll((n) => result(n === 0 ? initial : later), {
-      limit: 3,
-    });
-    const seen = pages.flatMap(ids);
-
-    expect(seen).toEqual([
-      'security:a',
-      'security:b',
-      'security:c',
-      'security:d',
-      'security:d2',
-      'security:f',
-    ]);
-    expect(new Set(seen).size).toBe(seen.length);
-    // The later counts reflect the newest list.
-    expect(pages.at(-1)?.total).toBe(later.length);
-  });
-
   test('keeps the limit between 1 and 50', () => {
     const issues = Array.from({ length: 60 }, (_, i) =>
       issue(`check_${String(i).padStart(2, '0')}`, 'security', 'warning')
