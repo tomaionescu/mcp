@@ -16,6 +16,16 @@ export type Handoff =
   | { status: 'handed' }
   | { status: 'failed'; message: string };
 
+/** How the user hands the selected issues to the assistant on this host. */
+export type ReviewAction =
+  /** The host takes messages from the view: Review sends one. */
+  | { kind: 'message'; review: () => void }
+  /**
+   * It doesn't: a hint says to ask in the chat. `sharesSelection` when the
+   * host shows the assistant the selection (`updateModelContext`).
+   */
+  | { kind: 'hint'; sharesSelection: boolean };
+
 export type HandoffEvent =
   /** The user pressed Review with these issues selected. */
   | { type: 'send'; issues: IssueSummary[] }

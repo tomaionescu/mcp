@@ -2,6 +2,9 @@ import '../../shared/button.css';
 import { type RefObject, useEffect, useRef } from 'react';
 import { useAnnouncement } from '../../shared/Announcer';
 import { RefreshIcon, SpinnerIcon } from '../../shared/icons';
+import type { ListContent } from './IssuesList';
+import type { PageWindow } from './issues-list';
+import type { IssueKey, IssueSummary as Issue } from './issues-schema';
 import { type McpView, useMcpView } from '../../shared/use-mcp-view';
 import { registerViewTool, type ViewToolHandle } from '../../shared/view-tools';
 import { IssueRow } from './IssueRow';
@@ -150,7 +153,6 @@ function ActiveIssues({ issues }: { issues: ActiveIssuesView }) {
   const ready = listing.status === 'ready' ? listing : undefined;
   const unreadChecks =
     ready?.checks.filter((check) => check.status === 'unavailable') ?? [];
-  const readAt = clockTime(ready?.readAt);
   const rows = visiblePage.rows;
   const range =
     rows.status === 'ready' && rows.items.length > 0
@@ -158,14 +160,7 @@ function ActiveIssues({ issues }: { issues: ActiveIssuesView }) {
       : undefined;
 
   useAnnouncement(listAnnouncement(issues, range));
-  useAnnouncement(
-    unavailable !== undefined
-      ? `Issues are unavailable. ${unavailable}`
-      : rows.status === 'failed'
-        ? rows.message
-        : undefined,
-    'assertive'
-  );
+  useAnnouncement(listAlert(unavailable, rows), 'assertive');
   useAnnouncement(handoff.status === 'handed' ? 'Handed to chat' : undefined);
   useAnnouncement(
     handoff.status === 'failed' ? handoff.message : undefined,
@@ -184,57 +179,29 @@ function ActiveIssues({ issues }: { issues: ActiveIssuesView }) {
         <h2 data-slot="title" id={TITLE_ID}>
           Issues
         </h2>
-        {readAt && ready?.readAt && (
-          <time data-slot="read-at" dateTime={ready.readAt}>
-            Read at {readAt}
-          </time>
-        )}
+        <ReadAt iso={ready?.readAt} />
         {refresh && (
-          <button
-            type="button"
-            data-size="sm"
-            data-slot="refresh"
-            disabled={refreshing}
-            onClick={refresh}
-          >
-            {refreshing ? <SpinnerIcon size={12} /> : <RefreshIcon size={12} />}
-            Refresh
-          </button>
+          <RefreshButton refreshing={refreshing} onRefresh={refresh} />
         )}
       </header>
 
-      {(unreadChecks.length > 0 || !!ready?.dropped || issues.partial) && (
-        <ul data-slot="notices">
-          {unreadChecks.map((check) => (
-            <li key={check.type} data-slot="notice" data-tone="warning">
-              {checkNotice(check)}
-            </li>
-          ))}
-          {!!ready?.dropped && (
-            <li data-slot="notice" data-tone="warning">
-              {plural(ready.dropped, 'issue')} could not be shown.
-            </li>
-          )}
-          {issues.partial && (
-            <li data-slot="notice">
-              {issues.partial.total === undefined
-                ? `Showing the first ${plural(issues.partial.shown, 'issue')}.`
-                : `Showing ${issues.partial.shown} of ${issues.partial.total}.`}{' '}
-              Ask the assistant for the rest.
-            </li>
-          )}
-        </ul>
-      )}
+      <Notices
+        unreadChecks={unreadChecks}
+        dropped={ready?.dropped ?? 0}
+        partial={issues.partial}
+      />
 
       <IssuesList
-        rows={rows}
-        unavailable={unavailable}
+        content={listContent({
+          unavailable,
+          rows,
+          incompleteChecks: unreadChecks.length > 0,
+          isSelected: (key) => selection.has(key),
+          onToggle: issues.toggle,
+          onRetry: retry,
+        })}
         pageSize={issues.pageSize}
         reserve={issues.multiPage}
-        isSelected={(key) => selection.has(key)}
-        incompleteChecks={unreadChecks.length > 0}
-        onToggle={issues.toggle}
-        onRetry={retry}
       />
 
       <footer data-slot="footer">
@@ -250,9 +217,12 @@ function ActiveIssues({ issues }: { issues: ActiveIssuesView }) {
         <SelectionBar
           count={selection.size}
           handoff={handoff}
-          sharesSelection={issues.sharesSelection}
+          action={
+            issues.review
+              ? { kind: 'message', review: issues.review }
+              : { kind: 'hint', sharesSelection: issues.sharesSelection }
+          }
           onClear={issues.clear}
-          onReview={issues.review}
         />
       </footer>
     </section>
@@ -268,4 +238,117 @@ function listAnnouncement(issues: ActiveIssuesView, range: string | undefined) {
     return range ? `Issues ${range}` : 'No issues found';
   }
   return undefined;
+}
+
+/** What a screen reader must hear at once: why there is no list or page. */
+function listAlert(unavailable: string | undefined, rows: PageWindow['rows']) {
+  if (unavailable !== undefined)
+    return `Issues are unavailable. ${unavailable}`;
+  if (rows.status === 'failed') return rows.message;
+  return undefined;
+}
+
+/** What the list shows, from the view's state. */
+function listContent({
+  unavailable,
+  rows,
+  incompleteChecks,
+  isSelected,
+  onToggle,
+  onRetry,
+}: {
+  unavailable: string | undefined;
+  rows: PageWindow['rows'];
+  incompleteChecks: boolean;
+  isSelected: (key: IssueKey) => boolean;
+  onToggle: (issue: Issue) => void;
+  onRetry: (() => void) | undefined;
+}): ListContent {
+  if (unavailable !== undefined) {
+    return { status: 'unavailable', reason: unavailable };
+  }
+  switch (rows.status) {
+    case 'loading':
+      return { status: 'loading' };
+    case 'failed':
+      return { status: 'failed', message: rows.message, onRetry };
+    case 'ready':
+      if (rows.items.length === 0) return { status: 'empty', incompleteChecks };
+      return { status: 'ready', items: rows.items, isSelected, onToggle };
+    default:
+      return rows satisfies never;
+  }
+}
+
+/** "Read at 14:02", when the time can be read. */
+function ReadAt({ iso }: { iso: string | undefined }) {
+  const time = clockTime(iso);
+  if (!iso || !time) return null;
+  return (
+    <time data-slot="read-at" dateTime={iso}>
+      Read at {time}
+    </time>
+  );
+}
+
+/** Reloads from the first page; a spinner while it does. */
+function RefreshButton({
+  refreshing,
+  onRefresh,
+}: {
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-size="sm"
+      data-slot="refresh"
+      disabled={refreshing}
+      onClick={onRefresh}
+    >
+      {refreshing ? <SpinnerIcon size={12} /> : <RefreshIcon size={12} />}
+      Refresh
+    </button>
+  );
+}
+
+/** Checks that couldn't be read, rows that couldn't be shown, and a partial list. */
+function Notices({
+  unreadChecks,
+  dropped,
+  partial,
+}: {
+  unreadChecks: IssueCheck[];
+  dropped: number;
+  partial: PartialList | undefined;
+}) {
+  if (unreadChecks.length === 0 && dropped === 0 && !partial) return null;
+  return (
+    <ul data-slot="notices">
+      {unreadChecks.map((check) => (
+        <li key={check.type} data-slot="notice" data-tone="warning">
+          {checkNotice(check)}
+        </li>
+      ))}
+      {dropped > 0 && (
+        <li data-slot="notice" data-tone="warning">
+          {plural(dropped, 'issue')} could not be shown.
+        </li>
+      )}
+      {partial && <PartialNotice {...partial} />}
+    </ul>
+  );
+}
+
+/** More issues exist than were delivered, and this host can't load them. */
+type PartialList = { shown: number; total?: number };
+
+/** "Showing 10 of 23. Ask the assistant for the rest." */
+function PartialNotice({ shown, total }: PartialList) {
+  const showing =
+    total === undefined
+      ? `Showing the first ${plural(shown, 'issue')}.`
+      : `Showing ${shown} of ${total}.`;
+  return <li data-slot="notice">{showing} Ask the assistant for the rest.</li>;
 }
