@@ -9,9 +9,9 @@ import type { IssuesPage } from '../issues-page.js';
 export type { IssueSummary, IssuesPage } from '../issues-page.js';
 
 /**
- * Project and connection facts for the view's prompt. Keys follow the
- * `poc/surfaces` prototype's prompt context. When the project cannot be read,
- * `project` carries its id alone.
+ * Project and connection facts that the view puts in the messages it sends
+ * the assistant. When the project cannot be read, `project` carries its id
+ * alone.
  */
 export type PromptContext = {
   project: {
