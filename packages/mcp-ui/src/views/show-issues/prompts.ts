@@ -1,10 +1,7 @@
 /**
- * The message the issues view sends the assistant. Ported from the
- * `poc/surfaces` prototype (`apps/mcp-apps/src/host/project-prompts.ts` in
- * supabase/supabase), with its wording kept. Changed: one request paragraph
- * per selected category instead of one finding per message, no paragraph
- * about the prototype's workspace and panel tools, and this view's tool and
- * resource. Components never write prompts.
+ * The messages the issues view sends the assistant: a user request wrapped
+ * with the project and connection it came from, and one request paragraph per
+ * selected category. Components never write prompts.
  *
  * Only advisor metadata (check id, title, level) goes into the message. The
  * affected objects, which name things the user created, never do.
@@ -87,7 +84,7 @@ export function projectCheckPrompt(category: IssueCategory) {
   return `Run a one-time, read-only ${check.name} for this project. Check ${check.scope}. First read https://supabase.com/docs/guides/observability/automate-with-agents/${check.guide} and the linked detection guidance. Use available read-only tools and explicit UTC log windows of at most 24 hours per request. Report findings, clear checks, and checks you cannot assess, with evidence and next steps. Do not invent missing baselines or limits. Redact secrets and personal data. Do not change the project, execute remediation, create a schedule, or send external messages.`;
 }
 
-/** The advisors' level names, which the prototype's finding line uses. */
+/** The advisors' level names, which each finding in a review request uses. */
 export const findingLevel = (severity: IssueSummary['severity']) =>
   severity === 'critical' ? 'ERROR' : 'WARN';
 

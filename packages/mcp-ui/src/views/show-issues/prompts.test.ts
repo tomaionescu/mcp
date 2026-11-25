@@ -71,7 +71,7 @@ describe('projectChatPrompt', () => {
     expect(prompt.endsWith('My request:\n\nMy question')).toBe(true);
   });
 
-  it('leaves out the prototype workspace tools', () => {
+  it('leaves out workspace and panel tools', () => {
     const prompt = projectChatPrompt(context, 'x');
     expect(prompt).not.toMatch(
       /read_workspace|open_\w+_panel|Projects extension/
