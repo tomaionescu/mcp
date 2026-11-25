@@ -490,7 +490,7 @@ describe('ShowIssues', () => {
       );
       const view = renderView();
 
-      for (let i = 0; i < 4; i++) click('Next');
+      for (let i = 0; i < 4; i++) click('Next page');
       await settle();
       expect(inView().getByText(LIST_CHANGED_MESSAGE)).not.toBeNull();
 
@@ -557,7 +557,7 @@ describe('ShowIssues', () => {
         page({ rows: issues(1, 20), total: 21, next_cursor: 'c2' })
       );
       const view = renderView();
-      click('Next');
+      click('Next page');
 
       await expect(callViewTool()).resolves.toEqual({
         content: [
