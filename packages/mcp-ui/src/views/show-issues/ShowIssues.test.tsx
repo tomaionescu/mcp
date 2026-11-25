@@ -238,12 +238,12 @@ describe('ShowIssues', () => {
     expect(view.titles()).toHaveLength(5);
     expect(view.range()).toBe('1–5 of 23');
     for (const range of ['6–10', '11–15', '16–20']) {
-      click('Next');
+      click('Next page');
       expect(view.range()).toBe(`${range} of 23`);
     }
     expect(callTool).not.toHaveBeenCalled();
 
-    click('Next');
+    click('Next page');
     expect(callTool).toHaveBeenCalledWith('app_paginate_issues', {
       project_id: PROJECT,
       type: 'all',
@@ -253,10 +253,11 @@ describe('ShowIssues', () => {
     expect(view.titles()).toEqual(['Issue 21', 'Issue 22', 'Issue 23']);
     expect(view.range()).toBe('21–23 of 23');
     expect(
-      screen.getByRole<HTMLButtonElement>('button', { name: 'Next' }).disabled
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Next page' })
+        .disabled
     ).toBe(true);
 
-    click('Previous');
+    click('Previous page');
     expect(view.range()).toBe('16–20 of 23');
     expect(callTool).toHaveBeenCalledTimes(1);
   });
@@ -270,13 +271,13 @@ describe('ShowIssues', () => {
     const view = renderView();
 
     fireEvent.click(view.checkbox('Issue 1'));
-    click('Next');
+    click('Next page');
     fireEvent.click(view.checkbox('Issue 6'));
     expect(inView().getByText('2 selected')).not.toBeNull();
-    click('Previous');
+    click('Previous page');
     expect(view.checkbox('Issue 1').checked).toBe(true);
 
-    click('Next');
+    click('Next page');
     click('Refresh');
     expect(callTool).toHaveBeenCalledWith('app_paginate_issues', {
       project_id: PROJECT,
@@ -461,13 +462,13 @@ describe('ShowIssues', () => {
       callTool.mockRejectedValueOnce(new Error('Forbidden'));
       const view = renderView();
 
-      for (let i = 0; i < 4; i++) click('Next');
+      for (let i = 0; i < 4; i++) click('Next page');
       await settle();
       expect(inView().getByText('Forbidden')).not.toBeNull();
 
-      click('Previous');
+      click('Previous page');
       expect(view.range()).toBe('16–20 of 23');
-      click('Next');
+      click('Next page');
       expect(inView().getByText('Forbidden')).not.toBeNull();
       expect(callTool).toHaveBeenCalledTimes(1);
 
@@ -529,10 +530,11 @@ describe('ShowIssues', () => {
       expect(
         inView().getByText('Showing 20 of 23. Ask the assistant for the rest.')
       ).not.toBeNull();
-      for (let i = 0; i < 3; i++) click('Next');
+      for (let i = 0; i < 3; i++) click('Next page');
       expect(view.range()).toBe('16–20 of 23');
       expect(
-        screen.getByRole<HTMLButtonElement>('button', { name: 'Next' }).disabled
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Next page' })
+          .disabled
       ).toBe(true);
     });
   });

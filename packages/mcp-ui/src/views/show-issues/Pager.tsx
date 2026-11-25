@@ -1,4 +1,5 @@
 import '../../shared/button.css';
+import { ChevronLeftIcon, ChevronRightIcon } from '../../shared/icons';
 
 /** "1–5 of 23", or "1–5" when the total isn't known. */
 export function rangeLabel(start: number, count: number, total?: number) {
@@ -7,7 +8,7 @@ export function rangeLabel(start: number, count: number, total?: number) {
   return total === undefined ? range : `${range} of ${total}`;
 }
 
-/** Previous and Next, with the range of issues on the page between them. */
+/** The range of issues on the page, between previous and next chevrons. */
 export function Pager({
   label,
   hasPrevious,
@@ -24,17 +25,28 @@ export function Pager({
 }) {
   return (
     <nav className="pager" aria-label="Issue pages">
+      <button
+        type="button"
+        data-size="sm"
+        data-slot="step"
+        aria-label="Previous page"
+        title="Previous page"
+        disabled={!hasPrevious}
+        onClick={onPrevious}
+      >
+        <ChevronLeftIcon />
+      </button>
       <span data-slot="range">{label}</span>
       <button
         type="button"
         data-size="sm"
-        disabled={!hasPrevious}
-        onClick={onPrevious}
+        data-slot="step"
+        aria-label="Next page"
+        title="Next page"
+        disabled={!hasNext}
+        onClick={onNext}
       >
-        Previous
-      </button>
-      <button type="button" data-size="sm" disabled={!hasNext} onClick={onNext}>
-        Next
+        <ChevronRightIcon />
       </button>
     </nav>
   );

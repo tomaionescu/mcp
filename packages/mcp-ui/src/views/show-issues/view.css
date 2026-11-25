@@ -79,7 +79,8 @@
       }
     }
 
-    /* The pager and the selection share a line when there is room. */
+    /* The pager at the start, the selection filling the rest of the line;
+       the selection drops under the pager when there is no room. */
     :where([data-slot="footer"]) {
       display: flex;
       flex-wrap: wrap;
@@ -258,18 +259,27 @@
     }
   }
 
-  /* "6–10 of 23", Previous, Next. */
+  /* "‹ 6–10 of 23 ›": the range between two icon-only buttons. */
   :where(.pager) {
     display: flex;
-    flex: 1 1 auto;
+    flex: none;
     align-items: center;
-    gap: var(--sb-space-2);
+    gap: var(--sb-space-1);
 
+    /* Square, as tall as the footer's other small buttons. */
+    :where([data-slot="step"]) {
+      justify-content: center;
+      padding: var(--sb-control-compact-padding-block);
+    }
+
+    /* Wide enough for a short range, so the chevrons don't move while a
+       page loads and the range is empty. */
     :where([data-slot="range"]) {
-      margin-inline-end: auto;
+      min-inline-size: 9ch;
       color: var(--sb-color-muted-foreground);
       font-size: var(--font-text-xs-size);
       font-variant-numeric: tabular-nums;
+      text-align: center;
       white-space: nowrap;
     }
   }
