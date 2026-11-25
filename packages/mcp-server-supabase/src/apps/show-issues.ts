@@ -4,7 +4,9 @@
  * Fields may be added but never renamed or removed: a host can pair an older
  * view with a newer server, or the other way round.
  */
+import type { z } from 'zod/v4';
 import type { IssuesPage } from '../issues-page.js';
+import type { paginateIssuesInputSchema } from '../tools/show-issues-inputs.js';
 
 export type { IssueSummary, IssuesPage } from '../issues-page.js';
 
@@ -53,3 +55,18 @@ export type ShowIssuesViewData = {
  */
 export const INVALID_CURSOR_CODE = 'invalid_cursor';
 export type InvalidCursorCode = typeof INVALID_CURSOR_CODE;
+
+/** The app-only tool that pages issues for the view. */
+export type PaginateIssuesToolName = 'app_paginate_issues';
+
+type PaginateIssuesSchemaInput = z.input<typeof paginateIssuesInputSchema>;
+
+/**
+ * The arguments a caller sends `app_paginate_issues`. `project_id` is
+ * optional: a project-scoped server drops it from the schema.
+ */
+export type PaginateIssuesInput = Omit<
+  PaginateIssuesSchemaInput,
+  'project_id'
+> &
+  Partial<Pick<PaginateIssuesSchemaInput, 'project_id'>>;

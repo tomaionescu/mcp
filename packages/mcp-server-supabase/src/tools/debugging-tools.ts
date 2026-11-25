@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
 import { VIEW_DATA_META_KEY } from '../apps/index.js';
 import {
   INVALID_CURSOR_CODE,
+  type PaginateIssuesToolName,
   type PromptContext,
   type ShowIssuesViewData,
 } from '../apps/show-issues.js';
@@ -17,8 +18,6 @@ import {
 } from '../issues.js';
 import {
   decodeIssuesCursor,
-  ISSUES_PAGE_DEFAULT_LIMIT,
-  ISSUES_PAGE_MAX_LIMIT,
   issuesPageSchema,
   pageIssues,
 } from '../issues-page.js';
@@ -31,6 +30,10 @@ import {
   type Project,
 } from '../platform/types.js';
 import { SHOW_ISSUES_UI_URI } from '../resources/app-resources.js';
+import {
+  paginateIssuesInputSchema,
+  showIssuesInputSchema,
+} from './show-issues-inputs.js';
 import {
   injectableTool,
   type ToolDefs,
@@ -269,32 +272,12 @@ const legacyIssuesInputSchema = getIssuesInputSchema.extend({
   type: z.enum(['all', 'security', 'performance']).default('all'),
 });
 
-const showIssuesInputSchema = z.object({
-  project_id: z.string(),
-  type: z.enum(['all', 'security', 'performance', 'health']).default('all'),
-});
-
 const legacyShowIssuesInputSchema = showIssuesInputSchema.extend({
   type: z.enum(['all', 'security', 'performance']).default('all'),
 });
 
 // The result is a sentence for the model, with the view's data in `_meta`.
 const showIssuesOutputSchema = z.object({});
-
-const paginateIssuesInputSchema = showIssuesInputSchema.extend({
-  cursor: z
-    .string()
-    .optional()
-    .describe(
-      'The next_cursor of the previous page. Omit it for the first page.'
-    ),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(ISSUES_PAGE_MAX_LIMIT)
-    .default(ISSUES_PAGE_DEFAULT_LIMIT),
-});
 
 function promptContext(
   projectId: string,
@@ -355,6 +338,7 @@ export const debuggingToolDefs = {
     viewOnly: true,
     _meta: { ui: { resourceUri: SHOW_ISSUES_UI_URI } },
   },
+  // The view calls this by `PaginateIssuesToolName` (see below).
   app_paginate_issues: {
     description:
       "Gets one page of the project's issues for the issues view, most severe first. Only the view calls this tool.",
@@ -409,6 +393,13 @@ export const debuggingToolDefs = {
     },
   },
 } as const satisfies ToolDefs;
+
+/**
+ * Fails typecheck if `app_paginate_issues` is renamed without the view's
+ * `PaginateIssuesToolName`.
+ */
+export type PaginateIssuesToolDef =
+  (typeof debuggingToolDefs)[PaginateIssuesToolName];
 
 export function getDebuggingTools({
   debugging,
