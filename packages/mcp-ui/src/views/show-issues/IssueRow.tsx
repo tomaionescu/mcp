@@ -26,7 +26,8 @@ export function issueMeta(issue: IssueSummary) {
 /**
  * One issue: a checkbox labelled by the title, the severity bars, the title
  * on one line and its category, severity and findings under it. The whole
- * row toggles the checkbox.
+ * row toggles the checkbox. Without `onToggle` the row is drawn greyed, and
+ * can't be selected.
  */
 export function IssueRow({
   issue,
@@ -35,19 +36,20 @@ export function IssueRow({
 }: {
   issue: IssueSummary;
   selected: boolean;
-  onToggle: (issue: IssueSummary) => void;
+  onToggle?: (issue: IssueSummary) => void;
 }) {
   const id = useId();
   return (
-    <li className="issue-row">
+    <li className="issue-row" data-state={onToggle ? undefined : 'disabled'}>
       <label data-slot="target">
         <input
           type="checkbox"
           data-slot="checkbox"
           checked={selected}
+          disabled={!onToggle}
           aria-labelledby={`${id}-title`}
           aria-describedby={`${id}-meta`}
-          onChange={() => onToggle(issue)}
+          onChange={() => onToggle?.(issue)}
         />
         <SeverityIndicator severity={issue.severity} />
         <span data-slot="text">

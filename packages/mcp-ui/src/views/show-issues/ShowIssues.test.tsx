@@ -8,13 +8,15 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnnouncerProvider } from '../../shared/Announcer';
+import { FakeBroadcastChannel } from '../../shared/fake-broadcast-channel';
 import { MessageTooLongError } from '../../shared/message-limits';
 import type { ToolCallState } from '../../shared/use-mcp-view';
+import { VIEWS_CHANNEL } from '../../shared/use-supersession';
 import type { IssueSummary } from './issues-schema';
 import { LIST_CHANGED_MESSAGE } from './issues-list';
 import { OUT_OF_STEP_MESSAGE } from './issues-schema';
 import { selectionContext } from './selection';
-import { ShowIssues } from './ShowIssues';
+import { RETIRED_NOTICE, ShowIssues } from './ShowIssues';
 
 const { host } = vi.hoisted(() => ({
   host: {
@@ -149,8 +151,13 @@ beforeEach(() => {
   host.callTool = callTool;
   host.sendMessage = sendMessage;
   host.updateModelContext = updateModelContext;
+  vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  FakeBroadcastChannel.reset();
+});
 
 describe('ShowIssues', () => {
   it('shows a page of rows under the header', () => {
@@ -485,6 +492,91 @@ describe('ShowIssues', () => {
       expect(
         screen.getByRole<HTMLButtonElement>('button', { name: 'Next' }).disabled
       ).toBe(true);
+    });
+  });
+
+  describe('retiring', () => {
+    /** Another issues view of the project, opened at `at`, announces itself. */
+    function newerViewOpens(at = 2, project = PROJECT) {
+      const channel = new FakeBroadcastChannel(VIEWS_CHANNEL);
+      channel.postMessage({
+        key: { view: 'show-issues', project },
+        at,
+        id: 'newer',
+      });
+      return settle();
+    }
+
+    /** Buttons and checkboxes in the view that can still be used. */
+    const enabledControls = () =>
+      [
+        ...document.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
+          'section button, section input'
+        ),
+      ].filter((control) => !control.disabled);
+
+    it('retires when a newer view of the project opens', async () => {
+      manyIssues();
+      const view = renderView();
+      fireEvent.click(view.checkbox('Issue 1'));
+      expect(updateModelContext).toHaveBeenCalledTimes(1);
+
+      await newerViewOpens();
+
+      expect(inView().getByText(RETIRED_NOTICE)).not.toBeNull();
+      // The rows it showed stay, greyed, and nothing can be used.
+      expect(view.titles()).toEqual(issues(1, 5).map((row) => row.title));
+      expect(view.checkbox('Issue 1').checked).toBe(false);
+      expect(enabledControls()).toEqual([]);
+      expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Review/ })).toBeNull();
+      // It takes back what it shared, once.
+      expect(updateModelContext).toHaveBeenCalledTimes(2);
+      expect(updateModelContext).toHaveBeenLastCalledWith({ content: [] });
+
+      await newerViewOpens(3);
+      expect(updateModelContext).toHaveBeenCalledTimes(2);
+    });
+
+    it('stays active for an older view or another project', async () => {
+      host.toolCall = {
+        status: 'ready',
+        data: {
+          page: page({ rows: issues(1, 2), total: 2 }),
+          opened: { at: 5, project: PROJECT },
+        },
+      };
+      renderView();
+
+      await newerViewOpens(1);
+      await newerViewOpens(9, 'zyxwvutsrqponmlkjihg');
+
+      expect(inView().queryByText(RETIRED_NOTICE)).toBeNull();
+      expect(screen.getByRole('button', { name: 'Refresh' })).not.toBeNull();
+      expect(updateModelContext).not.toHaveBeenCalled();
+    });
+
+    it('ignores a page that arrives after it retired', async () => {
+      manyIssues();
+      let answer: (page: unknown) => void = () => {};
+      callTool.mockReturnValueOnce(
+        new Promise((resolve) => {
+          answer = resolve;
+        })
+      );
+      const view = renderView();
+
+      click('Refresh');
+      await newerViewOpens();
+      expect(inView().getByText(RETIRED_NOTICE)).not.toBeNull();
+
+      answer(page({ rows: issues(30, 31), total: 2 }));
+      await settle();
+      expect(inView().getByText(RETIRED_NOTICE)).not.toBeNull();
+      expect(view.titles()).toEqual([]);
+      expect(callTool).toHaveBeenCalledTimes(1);
+      expect(updateModelContext).toHaveBeenCalledTimes(1);
+      expect(updateModelContext).toHaveBeenLastCalledWith({ content: [] });
     });
   });
 

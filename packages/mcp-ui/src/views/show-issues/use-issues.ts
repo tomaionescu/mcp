@@ -1,39 +1,24 @@
 /**
- * The issues view's wiring: runs the list and handoff machines, performs their
- * effects (server calls and messages), holds the selection and the visible
+ * The issues view's wiring: runs the view's state machine (the list, the
+ * selection and the handoff, until a newer view retires this one), performs
+ * its effects (server calls, messages and model context), holds the visible
  * page, and shares the selection with the model. The only place in the view
- * that catches errors: each failure becomes an event, and the machines keep
+ * that catches errors: each failure becomes an event, and the machine keeps
  * the message in state for the components to draw.
  */
-import {
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { MessageTooLongError } from '../../shared/message-limits';
 import { useMachine } from '../../shared/use-machine';
 import type { McpView } from '../../shared/use-mcp-view';
-import {
-  type Handoff,
-  type HandoffEffect,
-  type HandoffEvent,
-  handoffTransition,
-  initialHandoff,
-} from './handoff';
+import { useSupersession } from '../../shared/use-supersession';
+import type { Handoff, HandoffEvent } from './handoff';
 import { fetchIssuesPage } from './issues-client';
 import {
-  type Effect,
   type Event,
-  initialIssuesList,
-  issuesListTransition,
   type Listing,
   type PageRequest,
   type PageWindow,
   pageSizeFor,
-  type State as ListState,
   pageWindow,
 } from './issues-list';
 import {
@@ -43,12 +28,14 @@ import {
   parseViewData,
 } from './issues-schema';
 import { reviewIssuesPrompt } from './prompts';
+import { type Selection, selectionContext } from './selection';
 import {
-  emptySelection,
-  type Selection,
-  selectionContext,
-  selectionReducer,
-} from './selection';
+  initialViewState,
+  type ViewEffect,
+  type ViewEvent,
+  type ViewState,
+  viewTransition,
+} from './view-state';
 
 const ISSUE_TYPES: readonly IssueType[] = [
   'all',
@@ -63,6 +50,9 @@ export function issueTypeOf(input: Record<string, unknown> | undefined) {
   return ISSUE_TYPES.find((known) => known === type) ?? 'all';
 }
 
+/** This view's name on the channel that retires older views. */
+const VIEW_NAME = 'show-issues';
+
 export const TOO_LONG_MESSAGE =
   'That is too many issues for one message. Select fewer issues.';
 const CANCELLED_MESSAGE = 'The request was cancelled.';
@@ -72,7 +62,8 @@ const NO_MESSAGES_MESSAGE = "This host can't take messages from the view.";
 const errorMessage = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
 
-export type IssuesView = {
+export type ActiveIssuesView = {
+  status: 'active';
   type: IssueType;
   listing: Listing;
   /**
@@ -111,6 +102,17 @@ export type IssuesView = {
    */
   review: (() => void) | undefined;
 };
+
+/**
+ * A newer issues view of the same project has opened. This one does nothing
+ * more: it only shows the rows it had on screen, greyed.
+ */
+export type RetiredIssuesView = {
+  status: 'retired';
+  shown: readonly IssueSummary[];
+};
+
+export type IssuesView = ActiveIssuesView | RetiredIssuesView;
 
 /**
  * State and actions for the issues view, from the `useMcpView` connection and
@@ -162,35 +164,6 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
     }
   }
 
-  const [list, sendList] = useMachine<ListState, Event, Effect>(
-    issuesListTransition,
-    initialIssuesList(type),
-    (effect, send) => {
-      switch (effect.type) {
-        case 'fetchPage':
-          void loadPage(effect.request, send);
-          break;
-      }
-    }
-  );
-  const { listing } = list;
-
-  useEffect(() => {
-    const result = delivered?.result;
-    if (result) {
-      sendList({
-        type: 'delivered',
-        page: result.data.page,
-        dropped: result.dropped,
-      });
-    }
-  }, [delivered, sendList]);
-
-  const [selection, dispatchSelection] = useReducer(
-    selectionReducer,
-    emptySelection
-  );
-
   /** Builds the prompt for `issues` and sends it as the user. */
   async function handOff(
     issues: IssueSummary[],
@@ -214,26 +187,53 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
     }
   }
 
-  const [handoff, sendHandoff] = useMachine<
-    Handoff,
-    HandoffEvent,
-    HandoffEffect
-  >(handoffTransition, initialHandoff, (effect, send) => {
-    switch (effect.type) {
-      case 'sendMessage':
-        void handOff(effect.issues, send);
-        break;
-      case 'clearSelection':
-        dispatchSelection({ type: 'cleared' });
-        break;
+  const [state, send] = useMachine<ViewState, ViewEvent, ViewEffect>(
+    viewTransition,
+    initialViewState(type),
+    (effect, send) => {
+      switch (effect.type) {
+        case 'fetchPage':
+          void loadPage(effect.request, (event) =>
+            send({ type: 'list', event })
+          );
+          break;
+        case 'sendMessage':
+          void handOff(effect.issues, (event) =>
+            send({ type: 'handoff', event })
+          );
+          break;
+        case 'clearModelContext':
+          // Best effort, as when sharing the selection.
+          updateModelContext?.({ content: [] }).catch(() => {});
+          break;
+      }
     }
-  });
+  );
+  const active = state.status === 'active' ? state : undefined;
+  const sendList = (event: Event) => send({ type: 'list', event });
+
+  useEffect(() => {
+    const result = delivered?.result;
+    if (result) {
+      send({
+        type: 'list',
+        event: {
+          type: 'delivered',
+          page: result.data.page,
+          dropped: result.dropped,
+        },
+      });
+    }
+  }, [delivered, send]);
 
   // Each update replaces the last, so the whole selection goes every time. An
   // empty one clears what was shared; nothing is sent before anything was.
+  // A retired view has no selection, and shares nothing.
+  const selection = active?.selection;
   const shared = useRef(false);
-  const shareSelection = useEffectEvent((current: Selection) => {
-    if (!updateModelContext || (!current.size && !shared.current)) return;
+  const shareSelection = useEffectEvent((current: Selection | undefined) => {
+    if (!current || !updateModelContext) return;
+    if (!current.size && !shared.current) return;
     shared.current = current.size > 0;
     // Best effort: the selection is also in the Review message, and a failed
     // update has nothing the user could do about it.
@@ -245,19 +245,46 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
   // machine only learns that more rows are needed (`more`).
   const [page, setPage] = useState(0);
   const pageSize = pageSizeFor(hostContext?.containerDimensions);
-  // Without tool calls, the delivered rows are all there will be.
-  const shownListing: Listing =
-    !callTool && listing.status === 'ready'
-      ? { ...listing, tail: { status: 'end' } }
-      : listing;
-  const visiblePage = pageWindow(shownListing, page, pageSize);
+  /** The listing as drawn, and the window of it on screen. */
+  const windowOf = (listing: Listing) => {
+    // Without tool calls, the delivered rows are all there will be.
+    const shown: Listing =
+      !callTool && listing.status === 'ready'
+        ? { ...listing, tail: { status: 'end' } }
+        : listing;
+    return { shown, visiblePage: pageWindow(shown, page, pageSize) };
+  };
 
   // Next past the loaded rows (or a smaller page size) needs the next server
   // page. A failed tail doesn't ask again by itself: its Retry does.
-  const { needsMore } = visiblePage;
+  const needsMore =
+    !!active && windowOf(active.list.listing).visiblePage.needsMore;
   useEffect(() => {
-    if (needsMore) sendList({ type: 'more' });
-  }, [needsMore, sendList]);
+    if (needsMore) send({ type: 'list', event: { type: 'more' } });
+  }, [needsMore, send]);
+
+  // A newer issues view of this project retires this one. It keeps the rows
+  // on screen, to draw them greyed.
+  const opened = delivered?.result?.data.opened;
+  const superseded = useSupersession(
+    { view: VIEW_NAME, project: opened?.project },
+    opened?.at
+  );
+  const retire = useEffectEvent(() => {
+    if (!active) return;
+    const { rows } = windowOf(active.list.listing).visiblePage;
+    send({ type: 'retire', shown: rows.status === 'ready' ? rows.items : [] });
+  });
+  useEffect(() => {
+    if (superseded) retire();
+  }, [superseded]);
+
+  if (state.status === 'retired') {
+    return { status: 'retired', shown: state.shown };
+  }
+
+  const { listing } = state.list;
+  const { shown: shownListing, visiblePage } = windowOf(listing);
 
   const multiPage =
     shownListing.status === 'ready' &&
@@ -279,6 +306,7 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
       : undefined;
 
   return {
+    status: 'active',
     type,
     listing,
     unavailable,
@@ -292,13 +320,14 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
     busy:
       (listing.status === 'loading' && !unavailable) ||
       (listing.status === 'ready' && listing.tail.status === 'loading'),
-    selection,
-    handoff,
+    selection: state.selection,
+    handoff: state.handoff,
     sharesSelection: !!updateModelContext,
     previous: () => setPage(Math.max(0, visiblePage.page - 1)),
     next: () => setPage(visiblePage.page + 1),
-    toggle: (issue) => dispatchSelection({ type: 'toggled', issue }),
-    clear: () => dispatchSelection({ type: 'cleared' }),
+    toggle: (issue) =>
+      send({ type: 'selection', event: { type: 'toggled', issue } }),
+    clear: () => send({ type: 'selection', event: { type: 'cleared' } }),
     refresh: callTool && startOver,
     retry:
       callTool &&
@@ -312,6 +341,10 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
       }),
     review:
       sendMessage &&
-      (() => sendHandoff({ type: 'send', issues: [...selection.values()] })),
+      (() =>
+        send({
+          type: 'handoff',
+          event: { type: 'send', issues: [...state.selection.values()] },
+        })),
   };
 }

@@ -2,13 +2,23 @@ import '../../shared/button.css';
 import { useAnnouncement } from '../../shared/Announcer';
 import { RefreshIcon, SpinnerIcon } from '../../shared/icons';
 import { type McpView, useMcpView } from '../../shared/use-mcp-view';
+import { IssueRow } from './IssueRow';
 import { IssuesList } from './IssuesList';
-import type { IssueCategory, IssueCheck, IssueType } from './issues-schema';
+import {
+  type IssueCategory,
+  type IssueCheck,
+  type IssueSummary,
+  type IssueType,
+  issueKey,
+} from './issues-schema';
 import { Pager, rangeLabel } from './Pager';
 import { SelectionBar } from './SelectionBar';
-import { type IssuesView, issueTypeOf, useIssues } from './use-issues';
+import { type ActiveIssuesView, issueTypeOf, useIssues } from './use-issues';
 
 const TITLE_ID = 'show-issues-title';
+
+/** Shown by a view that a newer one of the same project has retired. */
+export const RETIRED_NOTICE = 'A newer issues view is open further down.';
 
 const CATEGORY_NAMES: Record<IssueCategory, string> = {
   security: 'Security',
@@ -57,6 +67,41 @@ function IssuesSection({
   type: IssueType;
 }) {
   const issues = useIssues(view, type);
+  return issues.status === 'retired' ? (
+    <RetiredIssues shown={issues.shown} />
+  ) : (
+    <ActiveIssues issues={issues} />
+  );
+}
+
+/**
+ * A retired view: the rows it had on screen, greyed, under a notice that
+ * points to the newer view. Nothing in it can be used.
+ */
+function RetiredIssues({ shown }: { shown: readonly IssueSummary[] }) {
+  useAnnouncement(RETIRED_NOTICE);
+  return (
+    <section className="show-issues" aria-labelledby={TITLE_ID}>
+      <header data-slot="header">
+        <h2 data-slot="title" id={TITLE_ID}>
+          Issues
+        </h2>
+      </header>
+      <ul data-slot="notices">
+        <li data-slot="notice">{RETIRED_NOTICE}</li>
+      </ul>
+      {shown.length > 0 && (
+        <ul className="issues-list">
+          {shown.map((issue) => (
+            <IssueRow key={issueKey(issue)} issue={issue} selected={false} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function ActiveIssues({ issues }: { issues: ActiveIssuesView }) {
   const {
     listing,
     unavailable,
@@ -179,7 +224,7 @@ function IssuesSection({
 }
 
 /** What a screen reader hears as the list changes: loading, then the page. */
-function listAnnouncement(issues: IssuesView, range: string | undefined) {
+function listAnnouncement(issues: ActiveIssuesView, range: string | undefined) {
   const { rows } = issues.visiblePage;
   if (issues.unavailable !== undefined) return undefined;
   if (rows.status === 'loading') return 'Loading issues';
