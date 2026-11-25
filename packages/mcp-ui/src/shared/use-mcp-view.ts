@@ -6,7 +6,8 @@ import type {
 import { useApp } from '@modelcontextprotocol/ext-apps/react';
 import { useEffect, useState } from 'react';
 import { callTool as callServerTool, type CallTool } from './call-tool';
-import { parseToolError, parseToolResult } from './tool-result';
+import { type SendMessage, sendMessage } from './send-message';
+import { parseToolError, parseViewResult } from './tool-result';
 import { useHostStyles } from './use-host-styles';
 
 export type ToolCallState<T> =
@@ -15,6 +16,25 @@ export type ToolCallState<T> =
   | { status: 'cancelled'; reason?: string }
   /** The tool call returned an error, or the view couldn't read its result. */
   | { status: 'error'; message: string };
+
+/**
+ * Replaces what the host shares with the model about the view
+ * (`ui/update-model-context`). Each update replaces the last, so send the
+ * whole state each time; `{ content: [] }` clears it.
+ */
+export type UpdateModelContext = (
+  params: Parameters<App['updateModelContext']>[0]
+) => Promise<void>;
+
+export type McpViewOptions = {
+  /**
+   * Runs once the app is created, before it connects to the host, with the
+   * handlers `useMcpView` needs already set. Register view tools here
+   * (`app.registerTool`), so the handshake declares them. Read once, when the
+   * view mounts.
+   */
+  onAppCreated?: (app: App) => void;
+};
 
 export type McpView<T> = {
   toolCall: ToolCallState<T>;
@@ -39,15 +59,32 @@ export type McpView<T> = {
    * (a sandboxed view can't open them itself).
    */
   openLink: ((url: string) => void) | undefined;
+  /**
+   * Sends a message to the assistant as the user, tidied to fit
+   * `message-limits.ts`; rejects when it is too long or the host refuses it.
+   * Undefined when the host can't receive messages from views.
+   */
+  sendMessage: SendMessage | undefined;
+  /**
+   * Shares the view's state with the model for its next turn. Undefined when
+   * the host doesn't accept context updates.
+   */
+  updateModelContext: UpdateModelContext | undefined;
 };
 
 /**
  * Connects a view to its host. Returns the state of the tool call the view
- * was opened for (its parsed result once it arrives), the app, the tool input,
- * the host context and capabilities, and helpers built on them (`callTool`,
- * `inputText`, `openLink`). Also applies the host's styles (see `useHostStyles`).
+ * was opened for (its result once it arrives: the view data in `_meta`, or
+ * else the parsed JSON text), the app, the tool input, the host context and
+ * capabilities, and helpers built on them (`callTool`, `inputText`,
+ * `openLink`, `sendMessage`, `updateModelContext`). A helper is undefined when
+ * the host can't do what it does. Also applies the host's styles (see
+ * `useHostStyles`).
  */
-export function useMcpView<T>(name: string): McpView<T> {
+export function useMcpView<T>(
+  name: string,
+  options: McpViewOptions = {}
+): McpView<T> {
   const [toolCall, setToolCall] = useState<ToolCallState<T>>({
     status: 'loading',
   });
@@ -72,7 +109,7 @@ export function useMcpView<T>(name: string): McpView<T> {
           return;
         }
         try {
-          setToolCall({ status: 'ready', data: parseToolResult<T>(result) });
+          setToolCall({ status: 'ready', data: parseViewResult<T>(result) });
         } catch (err) {
           setToolCall({ status: 'error', message: String(err) });
         }
@@ -84,6 +121,7 @@ export function useMcpView<T>(name: string): McpView<T> {
       };
       app.onhostcontextchanged = (changed) =>
         setHostContext((current) => ({ ...current, ...changed }));
+      options.onAppCreated?.(app);
     },
   });
 
@@ -112,6 +150,16 @@ export function useMcpView<T>(name: string): McpView<T> {
     openLink:
       app && hostCapabilities.openLinks
         ? (url) => void app.openLink({ url })
+        : undefined,
+    sendMessage:
+      app && hostCapabilities.message
+        ? (text) => sendMessage(app, text)
+        : undefined,
+    updateModelContext:
+      app && hostCapabilities.updateModelContext
+        ? async (params) => {
+            await app.updateModelContext(params);
+          }
         : undefined,
   };
 }

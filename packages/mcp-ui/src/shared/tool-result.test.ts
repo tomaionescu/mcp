@@ -1,6 +1,11 @@
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
-import { parseToolError, parseToolResult } from './tool-result';
+import {
+  parseToolError,
+  parseToolResult,
+  parseViewResult,
+  VIEW_DATA_META_KEY,
+} from './tool-result';
 
 const result = (...texts: string[]): CallToolResult => ({
   content: texts.map((text) => ({ type: 'text', text })),
@@ -58,5 +63,28 @@ describe('parseToolResult', () => {
 
   it('throws on invalid JSON', () => {
     expect(() => parseToolResult(result('not json'))).toThrow(SyntaxError);
+  });
+});
+
+describe('parseViewResult', () => {
+  it('reads the view data from _meta, not the text', () => {
+    const r: CallToolResult = {
+      ...result('Opened the issues view for the user.'),
+      _meta: { [VIEW_DATA_META_KEY]: { page: 1 } },
+    };
+    expect(parseViewResult(r)).toEqual({ page: 1 });
+  });
+
+  it('falls back to the JSON text without view data', () => {
+    const r: CallToolResult = {
+      ...result('{"id":"abc"}'),
+      _meta: { 'supabase.com/dashboardUrl': 'https://example.com' },
+    };
+    expect(parseViewResult(r)).toEqual({ id: 'abc' });
+    expect(parseViewResult(result('[1]'))).toEqual([1]);
+  });
+
+  it('throws like parseToolResult when neither is there', () => {
+    expect(() => parseViewResult(result())).toThrow(/no text content/);
   });
 });

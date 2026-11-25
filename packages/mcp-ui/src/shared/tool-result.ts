@@ -40,3 +40,19 @@ export function parseToolResult<T>(result: CallToolResult): T {
 
   return JSON.parse(first.text) as T;
 }
+
+/**
+ * The `_meta` key a tool result carries its view's data under, which the
+ * model does not read. `VIEW_DATA_META_KEY` in mcp-server-supabase
+ * `src/apps/index.ts`; the view cannot import server code at run time.
+ */
+export const VIEW_DATA_META_KEY = 'supabase.com/view';
+
+/**
+ * The view's data from a successful tool result: `_meta[VIEW_DATA_META_KEY]`
+ * when the server sends it, otherwise the JSON text (see `parseToolResult`).
+ */
+export function parseViewResult<T>(result: CallToolResult): T {
+  const data = result._meta?.[VIEW_DATA_META_KEY];
+  return data === undefined ? parseToolResult<T>(result) : (data as T);
+}
