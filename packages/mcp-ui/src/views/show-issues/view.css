@@ -1,0 +1,302 @@
+@layer view {
+  /*
+   * The issues view: a header, up to a page of fixed-height rows, and a
+   * footer with the pager and the selection. Every row is one line of title
+   * and one of meta, so the view's height is known without measuring, and it
+   * never scrolls inside (hosts clip inline views rather than scroll them).
+   */
+  :where(.show-issues) {
+    /* One row's height, borders included. */
+    --sb-view-show-issues-row-height: 56px;
+    /* Rows per page; the list sets it from the host's height limit. */
+    --sb-view-show-issues-page-size: 5;
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--sb-space-2);
+    padding-block: var(--sb-space-3);
+    overflow: hidden;
+    border: var(--border-width-regular) solid var(--sb-color-border);
+    border-radius: var(--border-radius-lg);
+    background: var(--sb-color-card);
+
+    /* "Issues", when it was read, then Refresh at the end. */
+    :where([data-slot="header"]) {
+      display: flex;
+      align-items: center;
+      gap: var(--sb-space-2);
+      padding-inline: var(--sb-space-3);
+    }
+
+    :where([data-slot="header"] [data-slot="title"]) {
+      margin: 0;
+      font-size: var(--font-text-md-size);
+      font-weight: var(--font-weight-medium);
+      line-height: var(--font-text-md-line-height);
+    }
+
+    :where([data-slot="header"] [data-slot="read-at"]) {
+      min-inline-size: 0;
+      overflow: hidden;
+      color: var(--sb-color-tertiary-foreground);
+      font-size: var(--font-text-xs-size);
+      line-height: var(--font-text-xs-line-height);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    :where([data-slot="header"] [data-slot="refresh"]) {
+      flex: none;
+      margin-inline-start: auto;
+    }
+
+    /* Checks that couldn't be read, rows that couldn't be shown. */
+    :where([data-slot="notices"]) {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sb-space-1);
+      margin: 0;
+      padding: 0 var(--sb-space-3);
+      list-style: none;
+    }
+
+    :where([data-slot="notices"] [data-slot="notice"]) {
+      padding: var(--sb-space-1) var(--sb-space-2);
+      border: var(--border-width-regular) solid var(--sb-color-border);
+      border-radius: var(--border-radius-md);
+      color: var(--sb-color-muted-foreground);
+      font-size: var(--font-text-xs-size);
+      line-height: var(--font-text-xs-line-height);
+
+      &:where([data-tone="warning"]) {
+        border-color: var(--sb-color-border-warning);
+        background: color-mix(
+          in oklab,
+          var(--sb-color-warning) 10%,
+          transparent
+        );
+        color: var(--sb-color-warning);
+      }
+    }
+
+    /* The pager and the selection share a line when there is room. */
+    :where([data-slot="footer"]) {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: var(--sb-space-2) var(--sb-space-3);
+      padding-inline: var(--sb-space-3);
+    }
+  }
+
+  /*
+   * One view page of rows. Once the list has more than one page it keeps a
+   * full page's height, so a short last page doesn't move the chat.
+   */
+  :where(.issues-list) {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    border-block-start: var(--border-width-regular) solid var(--sb-color-border);
+    list-style: none;
+
+    &:where([data-reserve="true"]) {
+      min-block-size: calc(
+        var(--sb-view-show-issues-page-size) *
+        var(--sb-view-show-issues-row-height)
+      );
+    }
+
+    /* Loading, failed, empty or unavailable, in place of the rows. */
+    :where([data-slot="status"]) {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--sb-space-1) var(--sb-space-2);
+      min-block-size: var(--sb-view-show-issues-row-height);
+      padding: var(--sb-space-1) var(--sb-space-3);
+      border-block-end: var(--border-width-regular) solid var(--sb-color-border);
+    }
+
+    :where([data-slot="status"] [data-slot="empty-icon"]) {
+      color: var(--sb-color-primary);
+    }
+
+    /* A row's shape while it loads: a title line and a meta line. */
+    :where([data-slot="skeleton-row"]) {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      block-size: var(--sb-view-show-issues-row-height);
+      padding-inline: var(--sb-space-3);
+      border-block-end: var(--border-width-regular) solid var(--sb-color-border);
+    }
+
+    :where([data-slot="skeleton-row"] [data-slot="skeleton"]) {
+      inline-size: 60%;
+      block-size: 0.8em;
+      border-radius: var(--border-radius-md);
+      background: color-mix(
+        in oklab,
+        var(--sb-color-foreground) 10%,
+        transparent
+      );
+      animation: pulse 1.6s ease-in-out infinite;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+      }
+
+      &:where([data-width="short"]) {
+        inline-size: 35%;
+      }
+    }
+  }
+
+  /* One issue: checkbox, severity bars, then title over meta. */
+  :where(.issue-row) {
+    block-size: var(--sb-view-show-issues-row-height);
+    border-block-end: var(--border-width-regular) solid var(--sb-color-border);
+
+    /* The whole row toggles the checkbox. */
+    :where([data-slot="target"]) {
+      display: flex;
+      align-items: center;
+      gap: var(--sb-space-3);
+      block-size: 100%;
+      padding-inline: var(--sb-space-3);
+      cursor: pointer;
+
+      &:where(:hover) {
+        background: var(--sb-color-muted);
+      }
+    }
+
+    :where([data-slot="checkbox"]) {
+      flex: none;
+      margin: 0;
+      accent-color: var(--sb-color-foreground);
+    }
+
+    :where([data-slot="text"]) {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-inline-size: 0;
+    }
+
+    :where([data-slot="text"] [data-slot="title"]) {
+      overflow: hidden;
+      font-size: var(--font-text-sm-size);
+      line-height: var(--font-text-sm-line-height);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    :where([data-slot="text"] [data-slot="meta"]) {
+      overflow: hidden;
+      color: var(--sb-color-muted-foreground);
+      font-size: var(--font-text-xs-size);
+      line-height: var(--font-text-xs-line-height);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  /* Studio's severity bars, rising left to right. */
+  :where(.severity-indicator) {
+    display: inline-flex;
+    flex: none;
+    align-items: flex-end;
+    gap: 2px;
+    block-size: 12px;
+
+    :where([data-slot="bar"]) {
+      inline-size: 3px;
+      block-size: 40%;
+      border-radius: 1px;
+      background: color-mix(
+        in oklab,
+        var(--sb-color-foreground) 15%,
+        transparent
+      );
+
+      &:where(:nth-child(2)) {
+        block-size: 70%;
+      }
+
+      &:where(:nth-child(3)) {
+        block-size: 100%;
+      }
+    }
+
+    &:where([data-severity="critical"]) {
+      :where([data-slot="bar"][data-lit="true"]) {
+        background: var(--sb-color-destructive);
+      }
+    }
+
+    &:where([data-severity="warning"]) {
+      :where([data-slot="bar"][data-lit="true"]) {
+        background: var(--sb-color-warning);
+      }
+    }
+  }
+
+  /* "6–10 of 23", Previous, Next. */
+  :where(.pager) {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--sb-space-2);
+
+    :where([data-slot="range"]) {
+      margin-inline-end: auto;
+      color: var(--sb-color-muted-foreground);
+      font-size: var(--font-text-xs-size);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+  }
+
+  /* The count, Clear and Review, with the last hand-off's result under them. */
+  :where(.selection-bar) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--sb-space-1);
+
+    :where([data-slot="actions"]) {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: var(--sb-space-2);
+    }
+
+    :where([data-slot="actions"] [data-slot="count"]) {
+      margin-inline-end: auto;
+      color: var(--sb-color-muted-foreground);
+      font-size: var(--font-text-xs-size);
+      white-space: nowrap;
+    }
+
+    :where([data-slot="hint"]) {
+      color: var(--sb-color-tertiary-foreground);
+      font-size: var(--font-text-xs-size);
+      line-height: var(--font-text-xs-line-height);
+    }
+
+    :where([data-slot="handed"]) {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: var(--sb-space-1);
+      color: var(--sb-color-primary);
+      font-size: var(--font-text-xs-size);
+      line-height: var(--font-text-xs-line-height);
+    }
+  }
+}

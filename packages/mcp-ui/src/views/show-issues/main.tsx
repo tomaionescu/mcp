@@ -1,14 +1,17 @@
-// Placeholder so the server can register `ui://supabase/show-issues` before
-// the issues view is built. The real view replaces this file.
 import '../../shared/base.css';
+import './view.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AnnouncerProvider } from '../../shared/Announcer';
+import { ShowIssues } from './ShowIssues';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing #root element');
 
 createRoot(root).render(
   <StrictMode>
-    <p>Issues</p>
+    <AnnouncerProvider>
+      <ShowIssues />
+    </AnnouncerProvider>
   </StrictMode>
 );

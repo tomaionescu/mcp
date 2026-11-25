@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { messageBlocks, tidyMessageText } from './message-limits';
+import {
+  MessageTooLongError,
+  messageBlocks,
+  tidyMessageText,
+} from './message-limits';
 
 describe('tidyMessageText', () => {
   it('collapses more than three line breaks in a row to three', () => {
@@ -34,6 +38,9 @@ describe('messageBlocks', () => {
   it('asks the user to send less rather than cut what they selected', () => {
     expect(() => messageBlocks(['a'.repeat(4000), 'b'.repeat(4000)])).toThrow(
       'The assistant accepts messages of up to 8,000 characters, and this one has 8,001. Select less to send.'
+    );
+    expect(() => messageBlocks(['a'.repeat(8001)])).toThrow(
+      MessageTooLongError
     );
   });
 
