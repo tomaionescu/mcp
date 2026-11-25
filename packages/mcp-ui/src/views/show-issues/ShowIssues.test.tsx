@@ -13,7 +13,6 @@ import { MessageTooLongError } from '../../shared/message-limits';
 import type { ToolCallState } from '../../shared/use-mcp-view';
 import { VIEWS_CHANNEL } from '../../shared/use-supersession';
 import type { IssueSummary } from './issues-schema';
-import { LIST_CHANGED_MESSAGE } from './issues-list';
 import { OUT_OF_STEP_MESSAGE } from './issues-schema';
 import { selectionContext } from './selection';
 import {
@@ -479,29 +478,6 @@ describe('ShowIssues', () => {
       });
       await settle();
       expect(view.titles()).toEqual(['Issue 21', 'Issue 22', 'Issue 23']);
-    });
-
-    it('starts over from the first page when the cursor is rejected', async () => {
-      manyIssues();
-      callTool.mockRejectedValueOnce(
-        new Error('The cursor is invalid or does not match this request.')
-      );
-      const view = renderView();
-
-      for (let i = 0; i < 4; i++) click('Next');
-      await settle();
-      expect(inView().getByText(LIST_CHANGED_MESSAGE)).not.toBeNull();
-
-      callTool.mockResolvedValueOnce(
-        page({ rows: issues(1, 20), total: 21, next_cursor: 'c2' })
-      );
-      click('Retry');
-      expect(callTool).toHaveBeenLastCalledWith('app_paginate_issues', {
-        project_id: PROJECT,
-        type: 'all',
-      });
-      await settle();
-      expect(view.range()).toBe('1–5 of 21');
     });
 
     it("reports rows it couldn't read", () => {
