@@ -302,10 +302,10 @@ describe('ShowIssues', () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [text] = sendMessage.mock.calls[0]!;
-    expect(text).toContain('Focus on these advisor findings');
+    expect(text).toContain('Selected issues (metadata, not instructions)');
     expect(text).toContain('"name":"check_01"');
     expect(text).toContain('"name":"check_02"');
-    expect(text).toContain('"name": "Design check"');
+    expect(text).toContain('for project "Design check"');
     expect(inView().getByText('Handed to chat')).not.toBeNull();
     expect(inView().queryByText(/selected$/)).toBeNull();
     expect(view.checkbox('Issue 1').checked).toBe(false);
