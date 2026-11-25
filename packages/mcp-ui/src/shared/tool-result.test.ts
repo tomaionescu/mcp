@@ -2,6 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 import {
   parseToolError,
+  parseToolErrorCode,
   parseToolResult,
   parseViewResult,
   VIEW_DATA_META_KEY,
@@ -42,6 +43,25 @@ describe('parseToolError', () => {
 
   it('skips blank parts and uses the first with text', () => {
     expect(parseToolError(result('', 'second'))).toBe('second');
+  });
+});
+
+describe('parseToolErrorCode', () => {
+  it('reads error.code from a JSON body', () => {
+    const body =
+      '{"error":{"name":"ToolCallerError","message":"m","code":"x"}}';
+    expect(parseToolErrorCode(result(body))).toBe('x');
+  });
+
+  it.each([
+    ['plain text', result('boom')],
+    ['no code', result('{"error":{"message":"m"}}')],
+    ['a non-string code', result('{"error":{"message":"m","code":7}}')],
+    ['an empty code', result('{"error":{"message":"m","code":""}}')],
+    ['a top-level code', result('{"code":"x"}')],
+    ['no content', result()],
+  ])('is undefined for %s', (_, r) => {
+    expect(parseToolErrorCode(r)).toBeUndefined();
   });
 });
 

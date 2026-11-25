@@ -2,6 +2,12 @@ import type { CallToolResult } from '@modelcontextprotocol/client';
 
 const FALLBACK_ERROR = 'The tool call failed.';
 
+/** The first non-blank text part of a result, trimmed. */
+const firstText = (result: CallToolResult) =>
+  result.content
+    .flatMap((part) => (part.type === 'text' ? [part.text.trim()] : []))
+    .find(Boolean);
+
 /**
  * The error text from an `isError` tool result. Reads `error.message` or
  * `message` from a JSON body, otherwise the plain text itself (the common
@@ -9,9 +15,7 @@ const FALLBACK_ERROR = 'The tool call failed.';
  * message if there is nothing usable.
  */
 export function parseToolError(result: CallToolResult): string {
-  const text = result.content
-    .flatMap((part) => (part.type === 'text' ? [part.text.trim()] : []))
-    .find(Boolean);
+  const text = firstText(result);
   if (!text) return FALLBACK_ERROR;
 
   try {
@@ -23,6 +27,23 @@ export function parseToolError(result: CallToolResult): string {
     return FALLBACK_ERROR;
   } catch {
     return text;
+  }
+}
+
+/**
+ * The machine-readable code of an `isError` tool result: `error.code` in its
+ * JSON body (a `ToolCallerError` with a `code` on the server). Undefined when
+ * the server sent none.
+ */
+export function parseToolErrorCode(result: CallToolResult): string | undefined {
+  const text = firstText(result);
+  if (!text) return undefined;
+
+  try {
+    const code = JSON.parse(text)?.error?.code;
+    return typeof code === 'string' && code ? code : undefined;
+  } catch {
+    return undefined;
   }
 }
 
