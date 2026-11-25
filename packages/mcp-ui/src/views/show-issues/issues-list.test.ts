@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { IssueSummary, ParsedIssuesPage } from './issues-schema';
 import {
   type Event,
+  INVALID_CURSOR_CODE,
   initialIssuesList,
   issuesListTransition,
   LIST_CHANGED_MESSAGE,
@@ -60,10 +61,15 @@ const loaded = (
   page: p,
   dropped,
 });
-const failed = (request: PageRequest, message = 'down'): Event => ({
+const failed = (
+  request: PageRequest,
+  message = 'down',
+  code?: string
+): Event => ({
   type: 'pageFailed',
   request,
   message,
+  ...(code && { code }),
 });
 const ready = (listing: Listing) => {
   if (listing.status !== 'ready')
@@ -235,10 +241,7 @@ describe('issues list machine', () => {
       const { state } = run(
         withMore,
         { type: 'more' },
-        failed(
-          after('c1'),
-          'The cursor is invalid or does not match this request. Request the first page again without a cursor.'
-        )
+        failed(after('c1'), 'The cursor is invalid.', INVALID_CURSOR_CODE)
       );
       expect(ready(state.listing).tail).toMatchObject({
         status: 'failed',
@@ -251,6 +254,20 @@ describe('issues list machine', () => {
         request: first,
       });
       expect(retried.effects).toEqual([{ type: 'fetchPage', request: first }]);
+    });
+
+    it('retries the same cursor for any other error code', () => {
+      const { state } = run(
+        withMore,
+        { type: 'more' },
+        failed(after('c1'), 'The cursor is invalid.', 'other_code')
+      );
+      expect(ready(state.listing).tail).toEqual({
+        status: 'failed',
+        cursor: 'c1',
+        message: 'The cursor is invalid.',
+        restart: false,
+      });
     });
 
     it('fails the listing when the first page fails, and retries it', () => {

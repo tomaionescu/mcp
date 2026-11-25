@@ -5,6 +5,7 @@
  * machine; `pageWindow` maps one onto the loaded items.
  */
 import type { McpUiHostContext } from '@modelcontextprotocol/ext-apps';
+import type { InvalidCursorCode } from '@supabase/mcp-server-supabase/show-issues';
 import type { Transition } from '../../shared/use-machine';
 import {
   type IssueCheck,
@@ -72,7 +73,13 @@ export type Event =
       page: ParsedIssuesPage;
       dropped: number;
     }
-  | { type: 'pageFailed'; request: PageRequest; message: string };
+  | {
+      type: 'pageFailed';
+      request: PageRequest;
+      message: string;
+      /** The server's error code, if it sent one (see `INVALID_CURSOR_CODE`). */
+      code?: string;
+    };
 
 export type Effect = { type: 'fetchPage'; request: PageRequest };
 
@@ -81,12 +88,11 @@ export const LIST_CHANGED_MESSAGE =
   'The list changed. Retry to load it again from the start.';
 
 /**
- * How the server's cursor error reads (`InvalidIssuesCursorError` in
- * mcp-server-supabase `src/issues-page.ts`): "The cursor is invalid or does
- * not match this request. …". The error reaches the view only as text, so it
- * is recognised by that phrase.
+ * The error code `app_paginate_issues` sends when it rejects a cursor
+ * (`INVALID_CURSOR_CODE` in mcp-server-supabase `src/apps/show-issues.ts`).
+ * Typed by the server's literal, so a change there fails typecheck here.
  */
-const CURSOR_REJECTED = /\bcursor is invalid\b/i;
+export const INVALID_CURSOR_CODE: InvalidCursorCode = 'invalid_cursor';
 
 export const initialIssuesList = (type: IssueType): State => ({
   type,
@@ -229,7 +235,7 @@ export const issuesListTransition: Transition<State, Event, Effect> = (
       }
       const ready = waitingForMore(state, event.request);
       if (ready) {
-        const restart = CURSOR_REJECTED.test(event.message);
+        const restart = event.code === INVALID_CURSOR_CODE;
         return {
           state: {
             ...state,
