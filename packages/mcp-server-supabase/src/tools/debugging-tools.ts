@@ -292,10 +292,6 @@ const paginateIssuesInputSchema = showIssuesInputSchema.extend({
     .default(ISSUES_PAGE_DEFAULT_LIMIT),
 });
 
-const legacyPaginateIssuesInputSchema = paginateIssuesInputSchema.extend({
-  type: z.enum(['all', 'security', 'performance']).default('all'),
-});
-
 function promptContext(
   projectId: string,
   project: Project | undefined,
@@ -523,11 +519,11 @@ export function getDebuggingTools({
         };
       },
     }),
+    // The view cannot see which advisors this platform has, so this schema is
+    // the same everywhere. A category the platform cannot read pages as empty,
+    // and `checks` marks it unavailable.
     app_paginate_issues: injectableTool({
       ...debuggingToolDefs.app_paginate_issues,
-      parameters: advisorAdapters.health
-        ? paginateIssuesInputSchema
-        : legacyPaginateIssuesInputSchema,
       inject: { project_id },
       execute: async ({ project_id, type, cursor, limit }) => {
         // Reject a bad cursor before reading any advisors.

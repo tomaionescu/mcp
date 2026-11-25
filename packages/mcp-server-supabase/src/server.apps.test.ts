@@ -19,6 +19,7 @@ import {
 import { callModernTool, createServerHarness } from '../test/server-harness.js';
 import { DASHBOARD_URL_META_KEY, VIEW_DATA_META_KEY } from './apps/index.js';
 import type { IssuesPage, ShowIssuesViewData } from './apps/show-issues.js';
+import type { SupabasePlatform } from './platform/types.js';
 import {
   CREATE_BRANCH_UI_URI,
   CREATE_PROJECT_UI_URI,
@@ -544,6 +545,75 @@ describe('issues view tools', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('cursor is invalid');
+  });
+
+  test('app_paginate_issues takes every type on a platform without health advisors', async () => {
+    const platform: SupabasePlatform = {
+      debugging: {
+        async getLogs() {
+          return [];
+        },
+        async getSecurityAdvisors() {
+          return {
+            lints: [
+              {
+                name: 'only_check',
+                title: 'Only check',
+                description: 'Description',
+                detail: 'Detail',
+                level: 'WARN',
+              },
+            ],
+          };
+        },
+        async getPerformanceAdvisors() {
+          return { lints: [] };
+        },
+      },
+    };
+    const { client } = await setupApps({ platform, features: ['debugging'] });
+    const { client: withHealth } = await setupApps({ features: ['debugging'] });
+
+    const inputSchemaOf = async (client: Client, name: string) =>
+      (await client.listTools()).tools.find((tool) => tool.name === name)
+        ?.inputSchema;
+    const schema = await inputSchemaOf(client, 'app_paginate_issues');
+    expect(schema).toEqual(
+      await inputSchemaOf(withHealth, 'app_paginate_issues')
+    );
+    expect(schema?.properties?.type).toMatchObject({
+      enum: ['all', 'security', 'performance', 'health'],
+    });
+    // The model reads show_issues' schema, so it offers only what get_issues does.
+    expect(
+      (await inputSchemaOf(client, 'show_issues'))?.properties?.type
+    ).toMatchObject({ enum: ['all', 'security', 'performance'] });
+
+    async function pageOf(type: string) {
+      const result = await callView(client, 'app_paginate_issues', {
+        project_id: 'legacy',
+        type,
+      });
+      expect(result.isError, type).toBeFalsy();
+      return JSON.parse(textOf(result)) as IssuesPage;
+    }
+    const checks = [
+      { type: 'security', status: 'complete' },
+      { type: 'performance', status: 'complete' },
+      {
+        type: 'health',
+        status: 'unavailable',
+        reason: 'Health issues are not supported by this platform',
+      },
+    ];
+
+    const health = await pageOf('health');
+    expect(health).toMatchObject({ issues: [], total: 0, next_cursor: null });
+    expect(health.checks).toEqual(checks);
+
+    const all = await pageOf('all');
+    expect(all.issues.map(({ id }) => id)).toEqual(['only_check']);
+    expect(all.checks).toEqual(checks);
   });
 
   test('app_paginate_issues caps the limit at 50', async () => {
