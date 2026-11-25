@@ -8,11 +8,13 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnnouncerProvider } from '../../shared/Announcer';
+import { ToolCallError } from '../../shared/call-tool';
 import { FakeBroadcastChannel } from '../../shared/fake-broadcast-channel';
 import { MessageTooLongError } from '../../shared/message-limits';
 import type { ToolCallState } from '../../shared/use-mcp-view';
 import { VIEWS_CHANNEL } from '../../shared/use-supersession';
 import type { IssueSummary } from './issues-schema';
+import { INVALID_CURSOR_CODE, LIST_CHANGED_MESSAGE } from './issues-list';
 import { OUT_OF_STEP_MESSAGE } from './issues-schema';
 import { selectionContext } from './selection';
 import {
@@ -478,6 +480,29 @@ describe('ShowIssues', () => {
       });
       await settle();
       expect(view.titles()).toEqual(['Issue 21', 'Issue 22', 'Issue 23']);
+    });
+
+    it('starts over from the first page when the cursor is rejected', async () => {
+      manyIssues();
+      callTool.mockRejectedValueOnce(
+        new ToolCallError('The cursor is invalid.', INVALID_CURSOR_CODE)
+      );
+      const view = renderView();
+
+      for (let i = 0; i < 4; i++) click('Next');
+      await settle();
+      expect(inView().getByText(LIST_CHANGED_MESSAGE)).not.toBeNull();
+
+      callTool.mockResolvedValueOnce(
+        page({ rows: issues(1, 20), total: 21, next_cursor: 'c2' })
+      );
+      click('Retry');
+      expect(callTool).toHaveBeenLastCalledWith('app_paginate_issues', {
+        project_id: PROJECT,
+        type: 'all',
+      });
+      await settle();
+      expect(view.range()).toBe('1–5 of 21');
     });
 
     it("reports rows it couldn't read", () => {

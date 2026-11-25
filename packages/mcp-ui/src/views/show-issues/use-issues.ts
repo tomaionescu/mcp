@@ -7,6 +7,7 @@
  * the message in state for the components to draw.
  */
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { ToolCallError } from '../../shared/call-tool';
 import { MessageTooLongError } from '../../shared/message-limits';
 import { useMachine } from '../../shared/use-machine';
 import type { McpView } from '../../shared/use-mcp-view';
@@ -178,7 +179,12 @@ export function useIssues(view: McpView<unknown>, type: IssueType): IssuesView {
       });
       return { type: 'pageLoaded', request, page, dropped };
     } catch (err) {
-      return { type: 'pageFailed', request, message: errorMessage(err) };
+      return {
+        type: 'pageFailed',
+        request,
+        message: errorMessage(err),
+        code: err instanceof ToolCallError ? err.code : undefined,
+      };
     }
   }
 
