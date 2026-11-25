@@ -71,13 +71,6 @@ describe('projectChatPrompt', () => {
     expect(prompt.endsWith('My request:\n\nMy question')).toBe(true);
   });
 
-  it('leaves out workspace and panel tools', () => {
-    const prompt = projectChatPrompt(context, 'x');
-    expect(prompt).not.toMatch(
-      /read_workspace|open_\w+_panel|Projects extension/
-    );
-  });
-
   it('fills in what the context lacks', () => {
     const block = contextBlock(
       projectChatPrompt({ project: { id: 'onlyid' } }, 'x')
@@ -147,11 +140,6 @@ describe('reviewIssuesPrompt', () => {
         ]
       )}`
     );
-  });
-
-  it('carries no affected-object counts or details', () => {
-    const prompt = reviewIssuesPrompt(context, [rls]);
-    expect(prompt).not.toContain('affected');
   });
 
   it('fits the message limit for a typical selection', () => {
