@@ -4,8 +4,7 @@ import {
   filterAndSortIssues,
   issueSeveritySchema,
   issuesResultSchema,
-  normalizeIssues,
-  type IssueCategory,
+  readIssues,
   type IssuesResult,
 } from '../issues.js';
 import { resolveLogWindow } from '../logs.js';
@@ -247,30 +246,6 @@ const legacyIssuesInputSchema = getIssuesInputSchema.extend({
   type: z.enum(['all', 'security', 'performance']).default('all'),
 });
 
-function mustPropagateCheckFailure(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const value = error as {
-    status?: unknown;
-    statusCode?: unknown;
-    code?: unknown;
-    response?: { status?: unknown };
-    cause?: unknown;
-  };
-  return (
-    [value.status, value.statusCode, value.response?.status].some(
-      (status) => status === 401 || status === 403
-    ) ||
-    (typeof value.code === 'number' &&
-      value.code >= -32768 &&
-      value.code <= -32000) ||
-    value.code === 'UNAUTHORIZED' ||
-    value.code === 'FORBIDDEN' ||
-    (value.cause !== error &&
-      value.cause !== undefined &&
-      mustPropagateCheckFailure(value.cause))
-  );
-}
-
 export const debuggingToolDefs = {
   get_issues: {
     description:
@@ -387,52 +362,14 @@ export function getDebuggingTools({
         : legacyIssuesInputSchema,
       inject: { project_id },
       execute: async ({ project_id, type, severity }) => {
-        const categories: IssueCategory[] =
-          type === 'all' ? ['security', 'performance', 'health'] : [type];
-        const results = await Promise.all(
-          categories.map(async (category): Promise<IssuesResult> => {
-            const adapter = advisorAdapters[category];
-            if (!adapter) {
-              return {
-                issues: [],
-                checks: [
-                  {
-                    type: category,
-                    status: 'unavailable',
-                    reason: 'Health issues are not supported by this platform',
-                  },
-                ],
-              };
-            }
-            try {
-              const response = await adapter(project_id, {
-                includeUnavailable: true,
-              });
-              return normalizeIssues(response, category);
-            } catch (error) {
-              if (mustPropagateCheckFailure(error)) throw error;
-              return {
-                issues: [],
-                checks: [
-                  {
-                    type: category,
-                    status: 'unavailable',
-                    reason:
-                      error instanceof Error
-                        ? error.message
-                        : 'Advisor check failed',
-                  },
-                ],
-              };
-            }
-          })
+        const { issues, checks } = await readIssues(
+          debugging,
+          project_id,
+          type
         );
         const result: IssuesResult = {
-          issues: filterAndSortIssues(
-            results.flatMap(({ issues }) => issues),
-            severity
-          ),
-          checks: results.flatMap(({ checks }) => checks),
+          issues: filterAndSortIssues(issues, severity),
+          checks,
         };
         return result;
       },
