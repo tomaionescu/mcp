@@ -2,7 +2,11 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import { ToolCallerError } from '@supabase/mcp-utils';
 import { z } from 'zod/v4';
 import { VIEW_DATA_META_KEY } from '../apps/index.js';
-import type { PromptContext, ShowIssuesViewData } from '../apps/show-issues.js';
+import {
+  INVALID_CURSOR_CODE,
+  type PromptContext,
+  type ShowIssuesViewData,
+} from '../apps/show-issues.js';
 import {
   filterAndSortIssues,
   issueSeveritySchema,
@@ -560,7 +564,7 @@ function assertIssuesCursor(cursor: string, type: IssueType) {
   } catch (error) {
     throw new ToolCallerError(
       error instanceof Error ? error.message : 'Invalid cursor',
-      { cause: error }
+      { cause: error, code: INVALID_CURSOR_CODE }
     );
   }
 }

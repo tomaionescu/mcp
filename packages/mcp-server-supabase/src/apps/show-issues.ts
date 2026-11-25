@@ -45,3 +45,11 @@ export type ShowIssuesViewData = {
   opened: { at: number; project: string };
   context: PromptContext;
 };
+
+/**
+ * The `error.code` in the JSON of an `app_paginate_issues` error result when
+ * the cursor is malformed or was made for another request. The view starts
+ * over from the first page on it. The text beside it is for the model.
+ */
+export const INVALID_CURSOR_CODE = 'invalid_cursor';
+export type InvalidCursorCode = typeof INVALID_CURSOR_CODE;

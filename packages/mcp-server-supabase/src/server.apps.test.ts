@@ -544,7 +544,14 @@ describe('issues view tools', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('cursor is invalid');
+    // The view starts over on the code; the message is for the model.
+    expect(JSON.parse(textOf(result))).toEqual({
+      error: {
+        name: 'ToolCallerError',
+        message: expect.stringContaining('cursor is invalid'),
+        code: 'invalid_cursor',
+      },
+    });
   });
 
   test('app_paginate_issues takes every type on a platform without health advisors', async () => {
