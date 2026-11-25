@@ -11,12 +11,14 @@ import {
 } from '../test/mocks.js';
 import { createServerHarness } from '../test/server-harness.js';
 import { isToolCallerError } from '@supabase/mcp-utils';
-import { VIEW_ONLY_TOOLS } from './apps/index.js';
 import { createSupabaseApiPlatform } from './platform/api-platform.js';
 import type { SupabasePlatform } from './platform/types.js';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { createSupabaseMcpServer, instructions } from './server.js';
-import { supabaseMcpToolSchemas } from './tools/tool-schemas.js';
+import {
+  supabaseMcpToolSchemas,
+  viewOnlyToolSet,
+} from './tools/tool-schemas.js';
 import { stripIndent } from 'common-tags';
 import gqlmin from 'gqlmin';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -135,7 +137,7 @@ describe('tools', () => {
       'create_edge_function_secret',
       'get_cost',
       'confirm_cost',
-      ...VIEW_ONLY_TOOLS,
+      ...viewOnlyToolSet,
     ]);
 
     const extraToolsInRegistry = registryToolNames.filter(

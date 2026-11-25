@@ -17,11 +17,7 @@ import {
   createProjectFixture,
 } from '../test/mocks.js';
 import { callModernTool, createServerHarness } from '../test/server-harness.js';
-import {
-  DASHBOARD_URL_META_KEY,
-  VIEW_DATA_META_KEY,
-  VIEW_ONLY_TOOLS,
-} from './apps/index.js';
+import { DASHBOARD_URL_META_KEY, VIEW_DATA_META_KEY } from './apps/index.js';
 import type { IssuesPage, ShowIssuesViewData } from './apps/show-issues.js';
 import {
   CREATE_BRANCH_UI_URI,
@@ -29,6 +25,7 @@ import {
   getAppResources,
   SHOW_ISSUES_UI_URI,
 } from './resources/app-resources.js';
+import { viewOnlyToolSet } from './tools/tool-schemas.js';
 
 const harness = createServerHarness();
 
@@ -292,7 +289,11 @@ describe('issues view tools', () => {
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name);
     expect(names).toContain('get_issues');
-    for (const name of VIEW_ONLY_TOOLS) {
+    expect([...viewOnlyToolSet].sort()).toEqual([
+      'app_paginate_issues',
+      'show_issues',
+    ]);
+    for (const name of viewOnlyToolSet) {
       expect(names).not.toContain(name);
       const result = await callView(client, name, { project_id: project.id });
       expect(result.isError, name).toBe(true);
@@ -307,7 +308,7 @@ describe('issues view tools', () => {
     });
 
     const { tools } = await client.listTools();
-    for (const name of VIEW_ONLY_TOOLS) {
+    for (const name of viewOnlyToolSet) {
       expect(tools.map((tool) => tool.name)).not.toContain(name);
     }
   });

@@ -352,6 +352,7 @@ export const debuggingToolDefs = {
       idempotentHint: true,
       openWorldHint: false,
     },
+    viewOnly: true,
     _meta: { ui: { resourceUri: SHOW_ISSUES_UI_URI } },
   },
   app_paginate_issues: {
@@ -366,6 +367,7 @@ export const debuggingToolDefs = {
       idempotentHint: true,
       openWorldHint: false,
     },
+    viewOnly: true,
     _meta: { ui: { visibility: ['app'] } },
   },
   get_logs: {

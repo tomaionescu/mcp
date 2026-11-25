@@ -21,7 +21,6 @@ import {
   APPS_EXTENSIONS,
   appsEnabled,
   DASHBOARD_URL_META_KEY,
-  VIEW_ONLY_TOOLS,
 } from './apps/index.js';
 import { createContentApiClient } from './content-api/index.js';
 import type { SupabasePlatform } from './platform/types.js';
@@ -47,7 +46,7 @@ import {
   getSecretTools,
 } from './tools/secret-tools.js';
 import { getStorageTools } from './tools/storage-tools.js';
-import { writeToolSet } from './tools/tool-schemas.js';
+import { viewOnlyToolSet, writeToolSet } from './tools/tool-schemas.js';
 import {
   CURRENT_ELICITATION_TOOLS,
   type ElicitationToolName,
@@ -538,7 +537,7 @@ export function createSupabaseMcpServer(options: SupabaseMcpServerOptions) {
         for (const [name, tool] of Object.entries(tools)) {
           // Without a view these tools do nothing useful, so they are
           // neither listed nor callable.
-          if (VIEW_ONLY_TOOLS.has(name)) {
+          if (viewOnlyToolSet.has(name)) {
             delete tools[name];
           } else if (tool._meta?.ui) {
             const { ui: _, ...meta } = tool._meta;
