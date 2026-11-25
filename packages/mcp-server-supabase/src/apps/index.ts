@@ -40,3 +40,18 @@ export const APPS_EXTENSIONS = {
 
 /** Tool result `_meta` key with the dashboard base URL the server links to. */
 export const DASHBOARD_URL_META_KEY = 'supabase.com/dashboardUrl';
+
+/**
+ * Tool result `_meta` key with the data a view renders. Hosts do not give
+ * `_meta` to the model, so the model reads only the result's `content`.
+ */
+export const VIEW_DATA_META_KEY = 'supabase.com/view';
+
+/**
+ * Tools that exist only for views. Hosts without MCP Apps never see them, and
+ * their models use the text tools (such as `get_issues`) instead.
+ */
+export const VIEW_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  'show_issues',
+  'app_paginate_issues',
+]);

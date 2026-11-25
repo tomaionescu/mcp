@@ -1,18 +1,32 @@
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { ToolCallerError } from '@supabase/mcp-utils';
 import { z } from 'zod/v4';
+import { VIEW_DATA_META_KEY } from '../apps/index.js';
+import type { PromptContext, ShowIssuesViewData } from '../apps/show-issues.js';
 import {
   filterAndSortIssues,
   issueSeveritySchema,
   issuesResultSchema,
   readIssues,
   type IssuesResult,
+  type IssueType,
 } from '../issues.js';
+import {
+  decodeIssuesCursor,
+  ISSUES_PAGE_DEFAULT_LIMIT,
+  ISSUES_PAGE_MAX_LIMIT,
+  issuesPageSchema,
+  pageIssues,
+} from '../issues-page.js';
 import { resolveLogWindow } from '../logs.js';
 import {
   logsServiceSchema,
+  type AccountOperations,
   type DebuggingOperations,
   type LogsDialect,
+  type Project,
 } from '../platform/types.js';
+import { SHOW_ISSUES_UI_URI } from '../resources/app-resources.js';
 import {
   injectableTool,
   type ToolDefs,
@@ -23,7 +37,12 @@ export const DEFAULT_LOGS_DIALECT: LogsDialect = 'clickhouse';
 
 type DebuggingToolsOptions = {
   debugging: DebuggingOperations;
+  /** Reads project facts for the issues view's prompt context. */
+  account?: AccountOperations;
   projectId?: string;
+  readOnly?: boolean;
+  /** This server's name and version, for the issues view's prompt context. */
+  server: { name: string; version: string };
 };
 
 const getLogsInputSchema = z.object({
@@ -246,6 +265,67 @@ const legacyIssuesInputSchema = getIssuesInputSchema.extend({
   type: z.enum(['all', 'security', 'performance']).default('all'),
 });
 
+const showIssuesInputSchema = z.object({
+  project_id: z.string(),
+  type: z.enum(['all', 'security', 'performance', 'health']).default('all'),
+});
+
+const legacyShowIssuesInputSchema = showIssuesInputSchema.extend({
+  type: z.enum(['all', 'security', 'performance']).default('all'),
+});
+
+// The result is a sentence for the model, with the view's data in `_meta`.
+const showIssuesOutputSchema = z.object({});
+
+const paginateIssuesInputSchema = showIssuesInputSchema.extend({
+  cursor: z
+    .string()
+    .optional()
+    .describe(
+      'The next_cursor of the previous page. Omit it for the first page.'
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(ISSUES_PAGE_MAX_LIMIT)
+    .default(ISSUES_PAGE_DEFAULT_LIMIT),
+});
+
+const legacyPaginateIssuesInputSchema = paginateIssuesInputSchema.extend({
+  type: z.enum(['all', 'security', 'performance']).default('all'),
+});
+
+function promptContext(
+  projectId: string,
+  project: Project | undefined,
+  {
+    readOnly,
+    scopedProjectId,
+    server,
+  }: PromptContext['connection'] & { server: DebuggingToolsOptions['server'] }
+): PromptContext {
+  return {
+    project: project
+      ? {
+          id: project.id,
+          ref: project.ref,
+          name: project.name,
+          region: project.region,
+          status: project.status,
+          organizationId: project.organization_id,
+          organizationSlug: project.organization_slug,
+        }
+      : { id: projectId },
+    mcpServer: {
+      ...server,
+      entrypoint: 'show_issues',
+      resource: SHOW_ISSUES_UI_URI,
+    },
+    connection: { readOnly, scopedProjectId },
+  };
+}
+
 export const debuggingToolDefs = {
   get_issues: {
     description:
@@ -259,6 +339,34 @@ export const debuggingToolDefs = {
       idempotentHint: true,
       openWorldHint: false,
     },
+  },
+  show_issues: {
+    description:
+      "Shows the user an interactive list of the project's security, performance, and health issues, where they can select issues to review with you. Use it when the user wants to see their issues. To read issues yourself, use get_issues.",
+    parameters: showIssuesInputSchema,
+    outputSchema: showIssuesOutputSchema,
+    annotations: {
+      title: 'Show project issues',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: { ui: { resourceUri: SHOW_ISSUES_UI_URI } },
+  },
+  app_paginate_issues: {
+    description:
+      "Gets one page of the project's issues for the issues view, most severe first. Only the view calls this tool.",
+    parameters: paginateIssuesInputSchema,
+    outputSchema: issuesPageSchema,
+    annotations: {
+      title: 'Page project issues',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: { ui: { visibility: ['app'] } },
   },
   get_logs: {
     description:
@@ -302,7 +410,10 @@ export const debuggingToolDefs = {
 
 export function getDebuggingTools({
   debugging,
+  account,
   projectId,
+  readOnly = false,
+  server,
 }: DebuggingToolsOptions) {
   const project_id = projectId;
   const { queryLogs } = debugging;
@@ -374,6 +485,55 @@ export function getDebuggingTools({
         return result;
       },
     }),
+    show_issues: injectableTool({
+      ...debuggingToolDefs.show_issues,
+      parameters: advisorAdapters.health
+        ? showIssuesInputSchema
+        : legacyShowIssuesInputSchema,
+      inject: { project_id },
+      execute: async ({ project_id, type }): Promise<CallToolResult> => {
+        const [result, project] = await Promise.all([
+          readIssues(debugging, project_id, 'all'),
+          // The prompt context is optional: the view still works without it.
+          account
+            ?.getProject(project_id)
+            .catch(() => undefined),
+        ]);
+        const page = pageIssues(result, { type, readAt: new Date() });
+        const viewData: ShowIssuesViewData = {
+          page,
+          opened: { at: Date.now(), project: project_id },
+          context: promptContext(project_id, project, {
+            readOnly,
+            scopedProjectId: projectId ?? null,
+            server,
+          }),
+        };
+        const count = `${page.total} ${page.total === 1 ? 'issue' : 'issues'}`;
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Opened the issues view for the user. It lists ${count}. To read the issues yourself, use get_issues.`,
+            },
+          ],
+          _meta: { [VIEW_DATA_META_KEY]: viewData },
+        };
+      },
+    }),
+    app_paginate_issues: injectableTool({
+      ...debuggingToolDefs.app_paginate_issues,
+      parameters: advisorAdapters.health
+        ? paginateIssuesInputSchema
+        : legacyPaginateIssuesInputSchema,
+      inject: { project_id },
+      execute: async ({ project_id, type, cursor, limit }) => {
+        // Reject a bad cursor before reading any advisors.
+        if (cursor) assertIssuesCursor(cursor, type);
+        const result = await readIssues(debugging, project_id, 'all');
+        return pageIssues(result, { type, cursor, limit, readAt: new Date() });
+      },
+    }),
     get_advisors: injectableTool({
       ...debuggingToolDefs.get_advisors,
       parameters: debugging.getHealthAdvisors
@@ -394,4 +554,15 @@ export function getDebuggingTools({
       },
     }),
   };
+}
+
+function assertIssuesCursor(cursor: string, type: IssueType) {
+  try {
+    decodeIssuesCursor(cursor, type);
+  } catch (error) {
+    throw new ToolCallerError(
+      error instanceof Error ? error.message : 'Invalid cursor',
+      { cause: error }
+    );
+  }
 }

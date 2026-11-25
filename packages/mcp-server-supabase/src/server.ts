@@ -21,6 +21,7 @@ import {
   APPS_EXTENSIONS,
   appsEnabled,
   DASHBOARD_URL_META_KEY,
+  VIEW_ONLY_TOOLS,
 } from './apps/index.js';
 import { createContentApiClient } from './content-api/index.js';
 import type { SupabasePlatform } from './platform/types.js';
@@ -371,7 +372,16 @@ export function createSupabaseMcpServer(options: SupabaseMcpServerOptions) {
       }
 
       if (debugging && enabledFeatures.has('debugging')) {
-        Object.assign(tools, getDebuggingTools({ debugging, projectId }));
+        Object.assign(
+          tools,
+          getDebuggingTools({
+            debugging,
+            account,
+            projectId,
+            readOnly,
+            server: { name: 'supabase', version },
+          })
+        );
       }
 
       if (development && enabledFeatures.has('development')) {
@@ -526,7 +536,11 @@ export function createSupabaseMcpServer(options: SupabaseMcpServerOptions) {
 
       if (!appsEnabled(experimentalApps, ctx)) {
         for (const [name, tool] of Object.entries(tools)) {
-          if (tool._meta?.ui) {
+          // Without a view these tools do nothing useful, so they are
+          // neither listed nor callable.
+          if (VIEW_ONLY_TOOLS.has(name)) {
+            delete tools[name];
+          } else if (tool._meta?.ui) {
             const { ui: _, ...meta } = tool._meta;
             tools[name] = {
               ...tool,

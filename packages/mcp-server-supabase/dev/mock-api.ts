@@ -1,6 +1,6 @@
 /**
  * A long-running fake Supabase Management API for visually testing MCP Apps
- * views (create-project, create-branch) without a real account or PAT.
+ * views (create-project, create-branch, show-issues) without a real account or PAT.
  *
  *   pnpm mock-api                                  # listens on :4010
  *   curl -X POST localhost:4010/__scenario -d '{"name":"create-project:init-failed"}'
@@ -23,6 +23,8 @@ type Project = Schemas['V1ProjectWithDatabaseResponse_Output'];
 type Branch = Schemas['BranchResponse_Output'];
 type ProjectStatus = Project['status'];
 type BranchStatus = Branch['status'];
+type Lint = Schemas['V1ProjectAdvisorsResponse_Output']['lints'][number];
+type IssueCategory = 'security' | 'performance' | 'health';
 
 const PORT = Number(process.env.MOCK_API_PORT ?? process.argv[2] ?? 4010);
 
@@ -59,6 +61,12 @@ type Scenario = {
   branchPollErrors?: PollErrors;
   /** Status returned by each successive branch list for a branch created while active; the last one repeats. */
   branchStatuses: BranchStatus[];
+  /** Advisor lints behind the issues tools. Defaults to `few`. */
+  issues?: 'few' | 'many' | 'none';
+  /** This category's advisors fail with a 503, so its check is unavailable. */
+  issuesDown?: IssueCategory;
+  /** After the first read of the issues, security advisors fail with a 403, so the next page fails. */
+  issuesFailAfterFirstRead?: boolean;
 };
 
 const HAPPY_PROJECT: ProjectStatus[] = [
@@ -171,6 +179,34 @@ const scenarios: Record<string, Scenario> = {
     projectStatuses: HAPPY_PROJECT,
     branchStatuses: ['RUNNING_MIGRATIONS'],
   },
+  'show-issues:many': {
+    description:
+      '23 issues across all categories (plus 2 info-level ones), so the list has more than one server page',
+    projectStatuses: HAPPY_PROJECT,
+    branchStatuses: HAPPY_BRANCH,
+    issues: 'many',
+  },
+  'show-issues:none': {
+    description: 'No issues in any category',
+    projectStatuses: HAPPY_PROJECT,
+    branchStatuses: HAPPY_BRANCH,
+    issues: 'none',
+  },
+  'show-issues:category-down': {
+    description:
+      'Health advisors fail with a 503, so the health check is unavailable; the other categories have issues',
+    projectStatuses: HAPPY_PROJECT,
+    branchStatuses: HAPPY_BRANCH,
+    issuesDown: 'health',
+  },
+  'show-issues:page-fails': {
+    description:
+      '23 issues; the first read works, then security advisors fail with a 403, so loading the next page or refreshing fails',
+    projectStatuses: HAPPY_PROJECT,
+    branchStatuses: HAPPY_BRANCH,
+    issues: 'many',
+    issuesFailAfterFirstRead: true,
+  },
 };
 
 const DEFAULT_SCENARIO = 'happy';
@@ -189,6 +225,8 @@ type BranchState = { branch: Branch; polls: number; seeded: boolean };
 const projects = new Map<string, ProjectState>();
 /** Keyed by parent project ref. */
 const branches = new Map<string, BranchState[]>();
+/** Security advisor reads since the scenario last changed. */
+let issueReads = 0;
 
 function randomRef(): string {
   const letters = 'abcdefghijklmnopqrstuvwxyz';
@@ -218,6 +256,7 @@ function makeProject(init: Partial<Project> & { ref: string }): Project {
 }
 
 function resetState() {
+  issueReads = 0;
   projects.clear();
   branches.clear();
   projects.set(SEED_REF, {
@@ -265,6 +304,7 @@ function makeBranch(init: {
 
 /** Restarts every status sequence, e.g. when the scenario changes. */
 function resetPolling() {
+  issueReads = 0;
   for (const p of projects.values()) p.polls = 0;
   for (const list of branches.values()) for (const b of list) b.polls = 0;
 }
@@ -502,6 +542,129 @@ route('POST', '/v1/projects/{ref}/database/query', ({ params }) => {
 });
 
 route('GET', '/v1/projects/{ref}/secrets', () => ({ body: [] }));
+
+// Advisors, read by get_issues, show_issues and app_paginate_issues.
+
+const advisorCategory = {
+  security: 'SECURITY',
+  performance: 'PERFORMANCE',
+  health: 'HEALTH',
+} as const;
+
+/** One lint per affected object; the server groups them into one issue. */
+function lints(
+  category: IssueCategory,
+  name: Lint['name'],
+  level: Lint['level'],
+  objects = 1
+): Lint[] {
+  const title = name.replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase());
+  return Array.from({ length: objects }, (_, i) => ({
+    name,
+    title,
+    level,
+    facing: 'EXTERNAL',
+    categories: [advisorCategory[category]],
+    description: `Mock description for ${name}.`,
+    detail:
+      category === 'health'
+        ? `Mock ${name} finding.`
+        : `Table public.table_${i + 1} is affected.`,
+    remediation: 'https://supabase.com/docs/guides/database/database-linter',
+    metadata:
+      category === 'health'
+        ? { type: 'health' }
+        : { schema: 'public', name: `table_${i + 1}`, type: 'table' },
+    cache_key: `${name}_${i + 1}`,
+  }));
+}
+
+const FEW_ISSUES: Record<IssueCategory, Lint[]> = {
+  security: [
+    ...lints('security', 'rls_disabled_in_public', 'ERROR', 2),
+    ...lints('security', 'function_search_path_mutable', 'WARN'),
+  ],
+  performance: [
+    ...lints('performance', 'auth_rls_initplan', 'WARN', 3),
+    ...lints('performance', 'unused_index', 'INFO'),
+  ],
+  health: lints('health', 'log_auth_error_rate_high', 'WARN'),
+};
+
+const MANY_ISSUES: Record<IssueCategory, Lint[]> = {
+  security: [
+    ...lints('security', 'rls_disabled_in_public', 'ERROR', 4),
+    ...lints('security', 'security_definer_view', 'ERROR'),
+    ...lints('security', 'auth_users_exposed', 'ERROR'),
+    ...lints('security', 'policy_exists_rls_disabled', 'ERROR', 2),
+    ...lints('security', 'leaked_service_key', 'ERROR'),
+    ...lints('security', 'function_search_path_mutable', 'WARN', 7),
+    ...lints('security', 'extension_in_public', 'WARN', 2),
+    ...lints('security', 'rls_references_user_metadata', 'WARN'),
+    ...lints('security', 'materialized_view_in_api', 'WARN'),
+    ...lints('security', 'foreign_table_in_api', 'WARN'),
+    ...lints('security', 'auth_otp_long_expiry', 'WARN'),
+    ...lints('security', 'auth_otp_short_length', 'WARN'),
+    ...lints('security', 'auth_leaked_password_protection', 'WARN'),
+    ...lints('security', 'auth_insufficient_mfa_options', 'WARN'),
+    ...lints('security', 'vulnerable_postgres_version', 'WARN'),
+    ...lints('security', 'rls_enabled_no_policy', 'INFO', 3),
+  ],
+  performance: [
+    ...lints('performance', 'unindexed_foreign_keys', 'WARN', 5),
+    ...lints('performance', 'auth_rls_initplan', 'WARN', 3),
+    ...lints('performance', 'no_primary_key', 'WARN'),
+    ...lints('performance', 'multiple_permissive_policies', 'WARN', 2),
+    ...lints('performance', 'duplicate_index', 'WARN'),
+    ...lints('performance', 'unused_index', 'INFO', 6),
+  ],
+  health: [
+    ...lints('health', 'log_data_api_error_rate_high', 'ERROR'),
+    ...lints('health', 'log_auth_error_rate_high', 'WARN'),
+    ...lints('health', 'log_storage_error_rate_high', 'WARN'),
+  ],
+};
+
+function advisorReply(category: IssueCategory, ref: string): Reply | Lint[] {
+  if (!projects.has(ref)) return notFound(`Project not found: ${ref}`);
+  const scenario = active();
+  if (category === 'security' && scenario.issuesFailAfterFirstRead) {
+    if (issueReads++ > 0) {
+      return { status: 403, body: { message: 'Access denied (mock)' } };
+    }
+  }
+  if (scenario.issuesDown === category) {
+    return {
+      status: 503,
+      body: { message: 'Service temporarily unavailable' },
+    };
+  }
+  const issues = scenario.issues ?? 'few';
+  if (issues === 'none') return [];
+  return (issues === 'many' ? MANY_ISSUES : FEW_ISSUES)[category];
+}
+
+for (const category of ['security', 'performance'] as const) {
+  route('GET', `/v1/projects/{ref}/advisors/${category}`, ({ params }) => {
+    const reply = advisorReply(category, params.ref!);
+    if (!Array.isArray(reply)) return reply;
+    return {
+      body: {
+        lints: reply,
+      } satisfies Schemas['V1ProjectAdvisorsResponse_Output'],
+    };
+  });
+}
+
+route('POST', '/v2/projects/{ref}/advisors/run', ({ params }) => {
+  const reply = advisorReply('health', params.ref!);
+  if (!Array.isArray(reply)) return reply;
+  return {
+    body: {
+      data: { type: 'project_advisors', attributes: { lints: reply } },
+    },
+  };
+});
 
 route('GET', '/v1/profile', () => ({
   headers: { 'X-Gotrue-Id': '00000000-0000-4000-8000-000000000000' },

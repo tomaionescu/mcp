@@ -3,17 +3,31 @@ import {
   RESOURCE_MIME_TYPE,
 } from '@modelcontextprotocol/ext-apps/server';
 import {
+  type CallToolResult,
   isInputRequiredResult,
   type Client,
 } from '@modelcontextprotocol/client';
+import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { createOrganization, createProject } from '../test/mocks.js';
+import packageJson from '../package.json' with { type: 'json' };
+import {
+  API_URL,
+  createOrganization,
+  createProject,
+  createProjectFixture,
+} from '../test/mocks.js';
 import { callModernTool, createServerHarness } from '../test/server-harness.js';
-import { DASHBOARD_URL_META_KEY } from './apps/index.js';
+import {
+  DASHBOARD_URL_META_KEY,
+  VIEW_DATA_META_KEY,
+  VIEW_ONLY_TOOLS,
+} from './apps/index.js';
+import type { IssuesPage, ShowIssuesViewData } from './apps/show-issues.js';
 import {
   CREATE_BRANCH_UI_URI,
   CREATE_PROJECT_UI_URI,
   getAppResources,
+  SHOW_ISSUES_UI_URI,
 } from './resources/app-resources.js';
 
 const harness = createServerHarness();
@@ -100,6 +114,7 @@ describe('MCP Apps', () => {
       )?.resourceUri;
     expect(linkOf('create_project')).toBe(CREATE_PROJECT_UI_URI);
     expect(linkOf('create_branch')).toBe(CREATE_BRANCH_UI_URI);
+    expect(linkOf('show_issues')).toBe(SHOW_ISSUES_UI_URI);
 
     expect(await listedViewUris(client)).toEqual([...VIEW_URIS].sort());
     expect(await linkedViewUris(client)).toEqual([...VIEW_URIS].sort());
@@ -209,5 +224,336 @@ describe('MCP Apps', () => {
     });
 
     expect(isInputRequiredResult(result)).toBe(true);
+  });
+});
+
+describe('issues view tools', () => {
+  async function setupApps(
+    options: Parameters<typeof harness.setupModern>[0] = {}
+  ) {
+    return harness.setupModern({
+      experimentalApps: true,
+      clientCapabilities: APPS_CLIENT_CAPABILITIES,
+      ...options,
+    });
+  }
+
+  /** Serves `lints` for one category and none for the others. */
+  function mockLints(
+    category: 'security' | 'performance',
+    lints: { name: string; level: 'INFO' | 'WARN' | 'ERROR' }[]
+  ) {
+    harness.mockServer?.use(
+      http.get(`${API_URL}/v1/projects/:projectId/advisors/${category}`, () =>
+        HttpResponse.json({
+          lints: lints.map((lint) => ({
+            ...lint,
+            title: `Title ${lint.name}`,
+            description: 'Description',
+            detail: 'Detail',
+          })),
+        })
+      ),
+      http.post(`${API_URL}/v2/projects/:projectId/advisors/run`, () =>
+        HttpResponse.json({
+          data: { type: 'project_advisors', attributes: { lints: [] } },
+        })
+      )
+    );
+  }
+
+  async function callView(
+    client: Client,
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<CallToolResult> {
+    const result = await callModernTool(client, { name, arguments: args });
+    if (isInputRequiredResult(result)) throw new Error('expected a result');
+    return result;
+  }
+
+  function textOf(result: CallToolResult) {
+    const [content] = result.content;
+    if (content?.type !== 'text') throw new Error('expected text content');
+    return content.text;
+  }
+
+  function viewDataOf(result: CallToolResult) {
+    return result._meta?.[VIEW_DATA_META_KEY] as ShowIssuesViewData;
+  }
+
+  test.each([
+    ['flag off', { experimentalApps: false }],
+    ['client without the extension', { clientCapabilities: {} }],
+  ])('%s: view-only tools are not listed or callable', async (_, options) => {
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps(options);
+
+    const { tools } = await client.listTools();
+    const names = tools.map((tool) => tool.name);
+    expect(names).toContain('get_issues');
+    for (const name of VIEW_ONLY_TOOLS) {
+      expect(names).not.toContain(name);
+      const result = await callView(client, name, { project_id: project.id });
+      expect(result.isError, name).toBe(true);
+      expect(textOf(result), name).toContain('tool not found');
+    }
+  });
+
+  test('legacy client: view-only tools are not listed', async () => {
+    const { client } = await harness.setup({
+      experimentalApps: true,
+      clientCapabilities: APPS_CLIENT_CAPABILITIES,
+    });
+
+    const { tools } = await client.listTools();
+    for (const name of VIEW_ONLY_TOOLS) {
+      expect(tools.map((tool) => tool.name)).not.toContain(name);
+    }
+  });
+
+  test('app_paginate_issues is listed for the view only', async () => {
+    const { client } = await setupApps();
+
+    const { tools } = await client.listTools();
+    const tool = tools.find(({ name }) => name === 'app_paginate_issues');
+    expect(tool?._meta).toEqual({ ui: { visibility: ['app'] } });
+    const annotationsOf = (name: string) =>
+      tools.find((tool) => tool.name === name)?.annotations;
+    const { title: _, ...readOnly } = annotationsOf('get_issues') ?? {};
+    expect(readOnly).toMatchObject({ readOnlyHint: true });
+    expect(annotationsOf('show_issues')).toEqual({
+      ...readOnly,
+      title: 'Show project issues',
+    });
+    expect(annotationsOf('app_paginate_issues')).toEqual({
+      ...readOnly,
+      title: 'Page project issues',
+    });
+  });
+
+  test('show_issues tells the model one sentence and gives the view its data', async () => {
+    mockLints('security', [
+      { name: 'warning_check', level: 'WARN' },
+      { name: 'critical_check', level: 'ERROR' },
+      { name: 'critical_check', level: 'ERROR' },
+      { name: 'info_check', level: 'INFO' },
+    ]);
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps();
+
+    const before = Date.now();
+    const result = await callView(client, 'show_issues', {
+      project_id: project.id,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toEqual([
+      {
+        type: 'text',
+        text: 'Opened the issues view for the user. It lists 2 issues. To read the issues yourself, use get_issues.',
+      },
+    ]);
+    expect(result.structuredContent).toBeUndefined();
+    expect(result._meta?.[DASHBOARD_URL_META_KEY]).toBeDefined();
+
+    const data = viewDataOf(result);
+    expect(data.page).toEqual({
+      issues: [
+        {
+          id: 'critical_check',
+          category: 'security',
+          title: 'Title critical_check',
+          severity: 'critical',
+          affected_count: 2,
+        },
+        {
+          id: 'warning_check',
+          category: 'security',
+          title: 'Title warning_check',
+          severity: 'warning',
+          affected_count: 1,
+        },
+      ],
+      total: 2,
+      counts: { all: 2, security: 2, performance: 0, health: 0 },
+      checks: [
+        { type: 'security', status: 'complete' },
+        { type: 'performance', status: 'complete' },
+        { type: 'health', status: 'complete' },
+      ],
+      next_cursor: null,
+      read_at: expect.any(String),
+    });
+    expect(data.opened.project).toBe(project.id);
+    expect(data.opened.at).toBeGreaterThanOrEqual(before);
+    expect(data.context).toEqual({
+      project: {
+        id: project.id,
+        ref: project.ref,
+        name: project.name,
+        region: project.region,
+        status: project.status,
+        organizationId: project.organization_id,
+        organizationSlug: project.organization_slug,
+      },
+      mcpServer: {
+        name: 'supabase',
+        version: packageJson.version,
+        entrypoint: 'show_issues',
+        resource: SHOW_ISSUES_UI_URI,
+      },
+      connection: { readOnly: false, scopedProjectId: null },
+    });
+  });
+
+  test('show_issues counts the requested type and reports the connection scope', async () => {
+    mockLints('performance', [{ name: 'slow', level: 'WARN' }]);
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps({
+      projectId: project.id,
+      readOnly: true,
+    });
+
+    const result = await callView(client, 'show_issues', { type: 'security' });
+
+    expect(textOf(result)).toBe(
+      'Opened the issues view for the user. It lists 0 issues. To read the issues yourself, use get_issues.'
+    );
+    const data = viewDataOf(result);
+    expect(data.page.total).toBe(0);
+    expect(data.page.counts).toEqual({
+      all: 1,
+      security: 0,
+      performance: 1,
+      health: 0,
+    });
+    expect(data.context.connection).toEqual({
+      readOnly: true,
+      scopedProjectId: project.id,
+    });
+  });
+
+  test('show_issues reports one unavailable category and keeps the others', async () => {
+    mockLints('security', [{ name: 'only_check', level: 'WARN' }]);
+    harness.mockServer?.use(
+      http.post(`${API_URL}/v2/projects/:projectId/advisors/run`, () =>
+        HttpResponse.json({ message: 'Health is down' }, { status: 500 })
+      )
+    );
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps();
+
+    const result = await callView(client, 'show_issues', {
+      project_id: project.id,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('It lists 1 issue.');
+    const { page } = viewDataOf(result);
+    expect(page.issues.map(({ id }) => id)).toEqual(['only_check']);
+    expect(page.checks).toEqual([
+      { type: 'security', status: 'complete' },
+      { type: 'performance', status: 'complete' },
+      { type: 'health', status: 'unavailable', reason: expect.any(String) },
+    ]);
+  });
+
+  test('show_issues still opens when the project cannot be read', async () => {
+    mockLints('security', []);
+    const { project } = await createProjectFixture();
+    harness.mockServer?.use(
+      http.get(`${API_URL}/v1/projects/:projectId`, () =>
+        HttpResponse.json({ message: 'Unavailable' }, { status: 500 })
+      )
+    );
+    const { client } = await setupApps();
+
+    const result = await callView(client, 'show_issues', {
+      project_id: project.id,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(viewDataOf(result).context.project).toEqual({ id: project.id });
+  });
+
+  test('pages from show_issues to the end with app_paginate_issues', async () => {
+    const names = Array.from(
+      { length: 45 },
+      (_, i) => `check_${String(i).padStart(2, '0')}`
+    );
+    mockLints(
+      'security',
+      names.map((name, i) => ({ name, level: i % 3 ? 'WARN' : 'ERROR' }))
+    );
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps();
+
+    const first = viewDataOf(
+      await callView(client, 'show_issues', { project_id: project.id })
+    ).page;
+    const pages: IssuesPage[] = [first];
+    let cursor = first.next_cursor;
+    while (cursor) {
+      const result = await callView(client, 'app_paginate_issues', {
+        project_id: project.id,
+        cursor,
+      });
+      expect(result.isError).toBeFalsy();
+      const page = JSON.parse(textOf(result)) as IssuesPage;
+      pages.push(page);
+      cursor = page.next_cursor;
+    }
+
+    expect(pages.map((page) => page.issues.length)).toEqual([20, 20, 5]);
+    const seen = pages.flatMap((page) => page.issues.map(({ id }) => id));
+    expect(new Set(seen).size).toBe(45);
+    expect(pages.every((page) => page.total === 45)).toBe(true);
+
+    // No cursor reads the first page again, which is how the view refreshes.
+    const refreshed = await callView(client, 'app_paginate_issues', {
+      project_id: project.id,
+      limit: 50,
+    });
+    expect(
+      JSON.parse(textOf(refreshed)).issues.map(({ id }: { id: string }) => id)
+    ).toEqual(seen);
+  });
+
+  test.each([
+    ['garbage', 'not-a-cursor'],
+    [
+      'made for another type',
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          type: 'health',
+          after: ['warning', 'health', 'x'],
+        })
+      ).toString('base64url'),
+    ],
+  ])('app_paginate_issues rejects a cursor that is %s', async (_, cursor) => {
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps();
+
+    const result = await callView(client, 'app_paginate_issues', {
+      project_id: project.id,
+      cursor,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('cursor is invalid');
+  });
+
+  test('app_paginate_issues caps the limit at 50', async () => {
+    const { project } = await createProjectFixture();
+    const { client } = await setupApps();
+
+    const result = await callView(client, 'app_paginate_issues', {
+      project_id: project.id,
+      limit: 51,
+    });
+
+    expect(result.isError).toBe(true);
   });
 });
