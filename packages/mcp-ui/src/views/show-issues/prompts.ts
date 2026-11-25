@@ -40,7 +40,7 @@ function projectPhrase(context: ParsedPromptContext | undefined) {
     : `for project ${ref}`;
 }
 
-/** The message for the "Review these issues" button. */
+/** The message for the "Review selected issues" button. */
 export function reviewIssuesPrompt(
   context: ParsedPromptContext | undefined,
   issues: Iterable<IssueSummary>

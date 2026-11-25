@@ -14,7 +14,7 @@ Views talk to the host with the official SDK, [`@modelcontextprotocol/ext-apps`]
 | --- | --- | --- |
 | `create-project` | `create_project` | The new project's card, kept live while it sets up |
 | `create-branch` | `create_branch` | The same card for a branch |
-| `show-issues` | `show_issues` | A project's issues, five to a page, to select and hand to the assistant with "Review these issues (N)" |
+| `show-issues` | `show_issues` | A project's issues, five to a page, to select and hand to the assistant with "Review selected issues (N)" |
 
 `show-issues` is split into layers, each knowing only the one below it: `issues-schema.ts` and `issues-client.ts` read the server's results (never cast: the view and the server can be different versions), `issues-list.ts`, `selection.ts`, `handoff.ts` and `prompts.ts` hold the logic without React, `use-issues.ts` runs it and is the only place that calls the host or catches errors, and the components (`IssuesList`, `IssueRow`, `SeverityIndicator`, `Pager`, `SelectionBar`) only draw props. It reads its first page from the result's `_meta` and pages further with `app_paginate_issues`. The mock API's `show-issues:*` scenarios cover many issues, none, a category that can't be read and a page that fails.
 

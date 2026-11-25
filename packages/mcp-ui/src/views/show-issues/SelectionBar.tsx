@@ -3,8 +3,9 @@ import { CheckIcon, SpinnerIcon } from '../../shared/icons';
 import { Message } from '../../shared/Message';
 import type { Handoff } from './handoff';
 
-/** "Review these issues (3)". */
-export const reviewLabel = (count: number) => `Review these issues (${count})`;
+/** "Review selected issues (3)". */
+export const reviewLabel = (count: number) =>
+  `Review selected issues (${count})`;
 
 /**
  * How many issues are selected, Clear, and the button that hands them to the

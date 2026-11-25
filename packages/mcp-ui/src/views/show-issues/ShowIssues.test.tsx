@@ -287,7 +287,7 @@ describe('ShowIssues', () => {
     expect(view.checkbox('Issue 1').checked).toBe(true);
     expect(inView().getByText('2 selected')).not.toBeNull();
     expect(
-      screen.getByRole('button', { name: 'Review these issues (2)' })
+      screen.getByRole('button', { name: 'Review selected issues (2)' })
     ).not.toBeNull();
   });
 
@@ -297,7 +297,7 @@ describe('ShowIssues', () => {
 
     fireEvent.click(view.checkbox('Issue 1'));
     fireEvent.click(view.checkbox('Issue 2'));
-    click('Review these issues (2)');
+    click('Review selected issues (2)');
     await settle();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -319,7 +319,7 @@ describe('ShowIssues', () => {
     const view = renderView();
 
     fireEvent.click(view.checkbox('Issue 1'));
-    click('Review these issues (1)');
+    click('Review selected issues (1)');
     await settle();
 
     expect(
@@ -335,7 +335,7 @@ describe('ShowIssues', () => {
     const view = renderView();
 
     fireEvent.click(view.checkbox('Issue 1'));
-    click('Review these issues (1)');
+    click('Review selected issues (1)');
     await settle();
 
     expect(inView().getByText(/Select fewer issues\.$/)).not.toBeNull();

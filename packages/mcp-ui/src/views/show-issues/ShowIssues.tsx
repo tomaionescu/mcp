@@ -52,7 +52,7 @@ function clockTime(iso: string | undefined) {
 
 /**
  * View for the `show_issues` tool: a project's issues, five to a page, to
- * select and hand to the assistant with "Review these issues (N)".
+ * select and hand to the assistant with "Review selected issues (N)".
  */
 export function ShowIssues() {
   // `refresh_issues_view` is registered once, before the view connects. It
